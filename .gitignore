@@ -1,5 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 node_modules
 /.pnp
@@ -32,10 +30,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
-
 
 # typescript
 *.tsbuildinfo
@@ -43,12 +41,26 @@ next-env.d.ts
 local-*
 .claude
 .z-ai-config
+.zscripts
 *.log
 dev.log
 dev.out.log
 test
 prompt
-
 server.log
-# Skills directory
+
+# Skills directory (private SDKs)
 /skills/
+
+# CHISMOSO data (DBs, generated reports, screenshots)
+/chismoso/data/
+/chismoso/node_modules/
+/chismoso/dist/
+/download/
+
+# agent context
+/agent-ctx/
+/tool-results/
+
+# upload (user-provided prompts)
+/upload/

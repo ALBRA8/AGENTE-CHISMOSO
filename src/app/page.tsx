@@ -30,7 +30,14 @@ import {
   XCircle,
   Clock,
   Sparkles,
+  Zap,
+  Bell,
+  Search,
+  Network,
 } from 'lucide-react';
+import { InvestigationStream } from '@/components/investigation-stream';
+import { AnomalyAlerts } from '@/components/anomaly-alerts';
+import { TopicsEvolution } from '@/components/topics-evolution';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -541,6 +548,20 @@ export default function Home() {
   const [investigationsLoading, setInvestigationsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [tab, setTab] = useState<'opportunities' | 'trends' | 'problems' | 'markdown'>('opportunities');
+  // NEW: Investigation mode — "sync" (existing) or "react" (streaming SSE)
+  const [mode, setMode] = useState<'sync' | 'react'>('react');
+  const [streaming, setStreaming] = useState(false);
+  // NEW: Right-panel tab — "providers" (existing), "anomalies", "topics", "mesh", "semantic"
+  const [sideTab, setSideTab] = useState<'providers' | 'anomalies' | 'topics' | 'mesh' | 'semantic'>('providers');
+  // NEW: Semantic search state
+  const [semQuery, setSemQuery] = useState('');
+  const [semResults, setSemResults] = useState<Array<{ signalId: string; score: number; snippet: string; url?: string }>>([]);
+  const [semLoading, setSemLoading] = useState(false);
+  // NEW: Mesh status
+  const [meshStatus, setMeshStatus] = useState<any>(null);
+  const [meshLoading, setMeshLoading] = useState(false);
+  // NEW: Topic selected for evolution chart
+  const [evolutionTopic, setEvolutionTopic] = useState<string>('');
 
   // --------------------------------------------------------------------------
   // Load providers + investigations on mount
@@ -575,7 +596,72 @@ export default function Home() {
   useEffect(() => {
     refreshProviders();
     refreshInvestigations();
+    // refreshMeshStatus will be called after its declaration below
   }, [refreshProviders, refreshInvestigations]);
+
+  // --------------------------------------------------------------------------
+  // NEW: Semantic search
+  // --------------------------------------------------------------------------
+
+  const runSemanticSearch = useCallback(async () => {
+    const q = semQuery.trim();
+    if (!q) return;
+    setSemLoading(true);
+    try {
+      const r = await fetch('/api/semantic-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, topK: 10 }),
+      });
+      const data = await r.json();
+      setSemResults(data.results ?? []);
+    } catch {
+      setSemResults([]);
+    } finally {
+      setSemLoading(false);
+    }
+  }, [semQuery]);
+
+  // --------------------------------------------------------------------------
+  // NEW: Mesh status
+  // --------------------------------------------------------------------------
+
+  const refreshMeshStatus = useCallback(async () => {
+    setMeshLoading(true);
+    try {
+      const r = await fetch('/api/mesh/config');
+      const data = await r.json();
+      setMeshStatus(data);
+    } catch {
+      setMeshStatus(null);
+    } finally {
+      setMeshLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshMeshStatus();
+  }, [refreshMeshStatus]);
+
+  // --------------------------------------------------------------------------
+  // NEW: ReAct streaming investigation
+  // --------------------------------------------------------------------------
+
+  const runStreamingInvestigation = useCallback(() => {
+    if (!objective.trim()) {
+      setError('Escribe un objetivo de investigación.');
+      return;
+    }
+    setError(null);
+    setResult(null);
+    setStreaming(true);
+    // The InvestigationStream component will:
+    //   1. Open EventSource to /api/investigate/stream
+    //   2. Render live progress lines
+    //   3. Call onComplete({investigationId}) when done
+    //   4. Call onError(msg) on failure
+    // We do nothing else here — the component owns the lifecycle.
+  }, [objective]);
 
   // --------------------------------------------------------------------------
   // Investigation handler
@@ -761,15 +847,20 @@ export default function Home() {
                   </div>
                   <div className="flex items-end">
                     <Button
-                      onClick={runInvestigation}
-                      disabled={loading || !objective.trim()}
+                      onClick={mode === 'react' ? runStreamingInvestigation : runInvestigation}
+                      disabled={(loading || streaming || !objective.trim())}
                       className="w-full"
                       size="sm"
                     >
-                      {loading ? (
+                      {(loading || streaming) ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
                           Investigando...
+                        </>
+                      ) : mode === 'react' ? (
+                        <>
+                          <Zap className="h-4 w-4 mr-1.5" />
+                          Investigar en vivo
                         </>
                       ) : (
                         <>
@@ -780,6 +871,56 @@ export default function Home() {
                     </Button>
                   </div>
                 </div>
+
+                {/* NEW: Mode selector */}
+                <div className="flex items-center gap-2 pt-1">
+                  <Label className="text-xs text-muted-foreground whitespace-nowrap">Modo:</Label>
+                  <div className="flex bg-muted rounded-md p-0.5 gap-0.5">
+                    <button
+                      onClick={() => setMode('react')}
+                      className={`text-[11px] px-2.5 py-1 rounded transition-colors ${
+                        mode === 'react' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      title="ReAct loop con LLM tool-use + streaming SSE en vivo"
+                    >
+                      <Zap className="h-3 w-3 inline mr-1" />
+                      ReAct (en vivo)
+                    </button>
+                    <button
+                      onClick={() => setMode('sync')}
+                      className={`text-[11px] px-2.5 py-1 rounded transition-colors ${
+                        mode === 'sync' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      title="Pipeline clásico — espera silenciosamente y devuelve el reporte al final"
+                    >
+                      <Play className="h-3 w-3 inline mr-1" />
+                      Sync (clásico)
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    {mode === 'react'
+                      ? 'LLM adaptativo + streaming SSE — verás cada paso en vivo'
+                      : 'Pipeline determinista con barra de progreso — resultados al final'}
+                  </span>
+                </div>
+
+                {/* NEW: Streaming SSE live panel */}
+                {streaming && mode === 'react' && (
+                  <InvestigationStream
+                    objective={objective}
+                    geography={geography}
+                    maxQueries={maxQueries}
+                    maxRuntimeMs={180_000}
+                    onComplete={({ investigationId }) => {
+                      setStreaming(false);
+                      void selectInvestigation(investigationId);
+                    }}
+                    onError={(msg) => {
+                      setError(msg);
+                      setStreaming(false);
+                    }}
+                  />
+                )}
 
                 {loading && (
                   <div className="space-y-1.5">
@@ -944,13 +1085,196 @@ export default function Home() {
             )}
           </div>
 
-          {/* Right column: providers + investigations */}
+          {/* Right column: tabbed panel with providers / anomalies / topics / mesh / semantic */}
           <div className="space-y-4">
-            <ProvidersPanel
-              providers={providers}
-              loading={providersLoading}
-              onRefresh={refreshProviders}
-            />
+            {/* Tabbed panel */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Network className="h-4 w-4 text-muted-foreground" />
+                  Inteligencia continua
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Anomalías, evolución de topics, mesh multi-agente, búsqueda semántica
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Tabs value={sideTab} onValueChange={(v) => setSideTab(v as any)}>
+                  <TabsList className="grid grid-cols-5 w-full mb-3" size="sm">
+                    <TabsTrigger value="providers" className="text-[10px] px-1 py-1">
+                      <Server className="h-3 w-3 mr-0.5" />
+                      Prov.
+                    </TabsTrigger>
+                    <TabsTrigger value="anomalies" className="text-[10px] px-1 py-1">
+                      <Bell className="h-3 w-3 mr-0.5" />
+                      Alertas
+                    </TabsTrigger>
+                    <TabsTrigger value="topics" className="text-[10px] px-1 py-1">
+                      <TrendingUp className="h-3 w-3 mr-0.5" />
+                      Topics
+                    </TabsTrigger>
+                    <TabsTrigger value="mesh" className="text-[10px] px-1 py-1">
+                      <Network className="h-3 w-3 mr-0.5" />
+                      Mesh
+                    </TabsTrigger>
+                    <TabsTrigger value="semantic" className="text-[10px] px-1 py-1">
+                      <Search className="h-3 w-3 mr-0.5" />
+                      Sem.
+                    </TabsTrigger>
+                  </TabsList>
+
+                  {/* Providers tab */}
+                  {sideTab === 'providers' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Fuentes registradas</span>
+                        <Button variant="ghost" size="icon" onClick={refreshProviders} disabled={providersLoading} className="h-6 w-6">
+                          <RefreshCw className={`h-3 w-3 ${providersLoading ? 'animate-spin' : ''}`} />
+                        </Button>
+                      </div>
+                      {providersLoading && providers.length === 0 ? (
+                        <div className="text-xs text-muted-foreground py-4 flex items-center justify-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" /> Cargando...
+                        </div>
+                      ) : providers.length === 0 ? (
+                        <div className="text-xs text-muted-foreground py-4 text-center">Sin providers.</div>
+                      ) : (
+                        <ul className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                          {providers.map((p) => (
+                            <li key={p.name} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
+                              <div className="flex items-center justify-between gap-2">
+                                <code className="text-[10px] font-mono">{p.name}</code>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`h-2 w-2 rounded-full ${
+                                    p.health === 'OK' ? 'bg-emerald-500' :
+                                    p.health === 'UNAVAILABLE' ? 'bg-red-500' :
+                                    p.health === 'DEGRADED' ? 'bg-amber-500' :
+                                    'bg-muted'
+                                  }`} />
+                                  <Badge variant="outline" className="text-[9px] py-0 px-1.5">{p.health}</Badge>
+                                </div>
+                              </div>
+                              <div className="mt-1 text-[10px] text-muted-foreground font-mono">{p.type}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Anomalies tab */}
+                  {sideTab === 'anomalies' && (
+                    <AnomalyAlerts />
+                  )}
+
+                  {/* Topics evolution tab */}
+                  {sideTab === 'topics' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          placeholder="Topic a vigilar (ej: restaurantes)"
+                          value={evolutionTopic}
+                          onChange={(e) => setEvolutionTopic(e.target.value)}
+                          className="text-xs h-7"
+                        />
+                      </div>
+                      {evolutionTopic.trim() ? (
+                        <TopicsEvolution topic={evolutionTopic.trim()} />
+                      ) : (
+                        <div className="text-xs text-muted-foreground py-6 text-center">
+                          Escribe un topic para ver su evolución temporal.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Mesh tab */}
+                  {sideTab === 'mesh' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Mesh multi-agente</span>
+                        <Button variant="ghost" size="icon" onClick={refreshMeshStatus} disabled={meshLoading} className="h-6 w-6">
+                          <RefreshCw className={`h-3 w-3 ${meshLoading ? 'animate-spin' : ''}`} />
+                        </Button>
+                      </div>
+                      {meshStatus ? (
+                        <div className="space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Estado:</span>
+                            <Badge variant={meshStatus.enabled ? 'default' : 'secondary'} className="text-[10px]">
+                              {meshStatus.enabled ? 'Activo' : 'Inactivo'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Suscriptores:</span>
+                            <span className="font-mono">{meshStatus.subscribers?.length ?? 0}</span>
+                          </div>
+                          {meshStatus.subscribers && meshStatus.subscribers.length > 0 && (
+                            <ul className="space-y-1 max-h-48 overflow-y-auto">
+                              {meshStatus.subscribers.map((s: any, i: number) => (
+                                <li key={i} className="border rounded p-1.5 text-[10px]">
+                                  <div className="font-mono">{s.agentName ?? s.agent_name ?? 'unknown'}</div>
+                                  <div className="text-muted-foreground truncate">{s.webhookUrl ?? s.webhook_url}</div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <p className="text-[10px] text-muted-foreground pt-1">
+                            Los endpoints <code>/api/mesh/events</code> y <code>/api/mesh/external-signals</code> permiten a otros agentes (AGENTE-LEADS, NEX-SCOPE) consumir oportunidades y empujar señales externas a CHISMOSO.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground py-4 text-center">Sin datos de mesh.</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Semantic search tab */}
+                  {sideTab === 'semantic' && (
+                    <div className="space-y-2">
+                      <span className="text-xs text-muted-foreground">Búsqueda semántica sobre señales acumuladas</span>
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          placeholder="Ej: fricción con cobros manuales"
+                          value={semQuery}
+                          onChange={(e) => setSemQuery(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') void runSemanticSearch(); }}
+                          className="text-xs h-7"
+                        />
+                        <Button size="sm" onClick={runSemanticSearch} disabled={semLoading || !semQuery.trim()} className="h-7 px-2">
+                          {semLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                        </Button>
+                      </div>
+                      {semResults.length > 0 ? (
+                        <ul className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                          {semResults.map((r) => (
+                            <li key={r.signalId} className="border rounded p-1.5 text-[10px]">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <Badge variant="outline" className="text-[9px] py-0 px-1">
+                                  {Math.round(r.score * 100)}%
+                                </Badge>
+                                <span className="font-mono text-muted-foreground truncate">{r.signalId}</span>
+                              </div>
+                              <p className="line-clamp-2">{r.snippet}</p>
+                              {r.url && (
+                                <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-sky-600 hover:underline break-all">
+                                  {r.url}
+                                </a>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground py-2">
+                          Ejecuta una investigación primero para acumular señales. La búsqueda semántica usa embeddings locales (TF-IDF hash, dim 256).
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </Tabs>
+              </CardContent>
+            </Card>
+
             <InvestigationsPanel
               investigations={investigations}
               loading={investigationsLoading}
@@ -966,11 +1290,12 @@ export default function Home() {
       <footer className="border-t bg-background mt-auto">
         <div className="container mx-auto px-4 py-3 flex items-center justify-between text-[10px] text-muted-foreground">
           <span>
-            CHISMOSO V1.0 · {providers.length} providers · {investigations.length} investigaciones
+            CHISMOSO V1.1 · {providers.length} providers · {investigations.length} investigaciones
+            {meshStatus?.enabled ? ' · mesh activo' : ''}
           </span>
           <span className="flex items-center gap-1">
             <CircleDot className="h-3 w-3" />
-            SQLite · z-ai-web-dev-sdk · better-sqlite3
+            SQLite · z-ai-web-dev-sdk · ReAct · SSE · Embeddings · Mesh
           </span>
         </div>
       </footer>
