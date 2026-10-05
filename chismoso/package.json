@@ -1,0 +1,36 @@
+{
+  "name": "chismoso",
+  "version": "1.0.0",
+  "description": "CHISMOSO V1.0 — Agente de inteligencia de señales, tendencias, problemas y oportunidades de negocio",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "chismoso": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "tsx scripts/e2e.ts",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "z-ai-web-dev-sdk": "^0.0.18"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}

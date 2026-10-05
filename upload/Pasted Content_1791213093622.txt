@@ -1,0 +1,2260 @@
+# PROMPT MAESTRO — CONSTRUCCIÓN DEL AGENTE CHISMOSO V1.0
+
+## 0. ROL DEL CONSTRUCTOR
+
+Actúa como **arquitecto principal, ingeniero de sistemas y constructor autónomo** del nuevo agente denominado:
+
+# CHISMOSO
+
+No quiero un chatbot genérico.
+
+No quiero un scraper con una interfaz de chat.
+
+No quiero un agregador de noticias.
+
+No quiero otro AGENTE-LEADS.
+
+No quiero una "navaja suiza" que intente hacer de todo.
+
+Quiero construir un **agente especializado de inteligencia de señales, tendencias, problemas emergentes y oportunidades de negocio** que forme parte de un ecosistema mayor de agentes.
+
+Tu trabajo es:
+
+1. estudiar cuidadosamente esta especificación;
+2. auditar el entorno/repo antes de construir;
+3. diseñar la arquitectura real;
+4. implementar únicamente lo que corresponda a V1;
+5. validar que las capacidades realmente funcionen;
+6. evitar funcionalidades ficticias o simuladas;
+7. dejar una base sólida para evolución futura;
+8. documentar claramente qué existe, qué no existe y qué queda pendiente.
+
+---
+
+# 1. CONTEXTO DEL ECOSISTEMA
+
+CHISMOSO NO EXISTE AISLADO.
+
+Forma parte de una arquitectura de agentes especializados.
+
+La separación de responsabilidades es fundamental.
+
+Actualmente existen o se están construyendo otros especialistas:
+
+### AGENTE-LEADS
+
+Pregunta principal:
+
+> "¿Quiénes podrían ser nuestros clientes?"
+
+Responsabilidad:
+
+* descubrir empresas/personas potencialmente compradoras;
+* investigar prospectos;
+* enriquecer perfiles;
+* validar información;
+* deduplicar;
+* puntuar leads;
+* producir Lead Intelligence;
+* eventualmente enviar resultados a CRM-ALBRA.
+
+NO debe detectar tendencias de mercado de forma general.
+
+---
+
+### CHISMOSO
+
+Pregunta principal:
+
+> "¿Qué está empezando a pasar?"
+
+Responsabilidad:
+
+* detectar señales;
+* descubrir tendencias;
+* detectar problemas emergentes;
+* detectar cambios de comportamiento;
+* identificar oportunidades;
+* correlacionar señales procedentes de distintas fuentes;
+* distinguir ruido de señales relevantes;
+* construir inteligencia accionable;
+* conservar evidencia;
+* observar evolución temporal;
+* generar oportunidades que puedan ser consumidas por otros agentes.
+
+CHISMOSO NO debe convertirse en AGENTE-LEADS.
+
+---
+
+### NEX-SCOPE
+
+Especialista en inteligencia relacionada con YouTube.
+
+---
+
+### RADAR-SECOP2
+
+Especialista en inteligencia de contratación pública.
+
+---
+
+### AGENTE-TRADING
+
+Especialista en mercados/trading.
+
+---
+
+### CRM-ALBRA
+
+Sistema comercial/CRM que eventualmente puede recibir oportunidades y leads provenientes de otros agentes.
+
+---
+
+# 2. MISIÓN CENTRAL DE CHISMOSO
+
+La misión de CHISMOSO es:
+
+> **observar el entorno digital, identificar señales tempranas, convertir señales dispersas en inteligencia estructurada y descubrir tendencias, problemas y oportunidades antes de que sean obvias para todos.**
+
+CHISMOSO debe pasar de:
+
+```text
+DATOS
+↓
+SEÑALES
+↓
+PATRONES
+↓
+TENDENCIAS / PROBLEMAS
+↓
+OPORTUNIDADES
+↓
+INTELIGENCIA ACCIONABLE
+```
+
+No debe limitarse a devolver enlaces.
+
+No debe limitarse a resumir noticias.
+
+No debe confundir volumen de menciones con importancia.
+
+No debe declarar una tendencia porque encontró una sola publicación.
+
+---
+
+# 3. PRINCIPIO FUNDAMENTAL
+
+La arquitectura debe seguir este principio:
+
+```text
+LLM = INTELIGENCIA / INTERPRETACIÓN / PLANIFICACIÓN
+
+TOOLS = CAPACIDADES
+
+PROVIDERS = ACCESO A FUENTES EXTERNAS
+
+COLLECTORS = OBTENCIÓN DE SEÑALES
+
+NORMALIZERS = NORMALIZACIÓN
+
+EVIDENCE = VERDAD OBSERVABLE
+
+ANALYSIS = INTERPRETACIÓN
+
+SCORING = EVALUACIÓN
+
+MEMORY = HISTORIAL / EVOLUCIÓN
+
+REPORT = COMUNICACIÓN
+
+INTERFACE = INTERACCIÓN CON EL USUARIO
+```
+
+No mezcles estas responsabilidades.
+
+El LLM NO debe contener dentro del prompt toda la lógica operacional.
+
+Las herramientas no deben contener inteligencia de negocio compleja.
+
+Los proveedores externos no deben contaminar el modelo interno.
+
+---
+
+# 4. PRINCIPIO DE AUTONOMÍA
+
+CHISMOSO debe poder recibir una instrucción relativamente simple como:
+
+> "Investiga qué está empezando a crecer en el mercado de restaurantes en Colombia y dime qué oportunidades de negocio podrían aparecer."
+
+y resolver internamente:
+
+```text
+INTERPRETAR OBJETIVO
+↓
+DEFINIR ÁMBITO
+↓
+PLANIFICAR INVESTIGACIÓN
+↓
+SELECCIONAR FUENTES
+↓
+RECOPILAR SEÑALES
+↓
+NORMALIZAR
+↓
+AGRUPAR
+↓
+COMPARAR
+↓
+BUSCAR CONFIRMACIÓN
+↓
+ANALIZAR
+↓
+PUNTUAR
+↓
+DETECTAR TENDENCIA / PROBLEMA / OPORTUNIDAD
+↓
+GENERAR REPORTE
+↓
+GUARDAR INTELIGENCIA
+```
+
+El usuario NO debería tener que decirle:
+
+* qué API utilizar;
+* qué herramienta llamar;
+* cuántas búsquedas hacer;
+* cómo cruzar las fuentes;
+* cómo puntuar;
+* cómo almacenar;
+* cómo deduplicar.
+
+El usuario expresa el objetivo.
+
+CHISMOSO resuelve el proceso.
+
+---
+
+# 5. PERO AUTONOMÍA NO SIGNIFICA INVENTAR
+
+Regla crítica:
+
+> **Nunca presentar inferencias como hechos observados.**
+
+Separar estrictamente:
+
+### OBSERVED
+
+Lo que una fuente realmente muestra.
+
+### DERIVED
+
+Conclusión obtenida mediante procesamiento de evidencia.
+
+### INFERRED
+
+Hipótesis razonable.
+
+### PREDICTED
+
+Proyección futura.
+
+### UNKNOWN
+
+Información insuficiente.
+
+Cada resultado importante debe conservar esta distinción.
+
+---
+
+# 6. ADN DE EVIDENCIA
+
+Toda señal importante debe poder rastrearse.
+
+Modelo conceptual:
+
+```text
+Signal
+├── id
+├── source
+├── source_type
+├── url/reference
+├── observed_at
+├── collected_at
+├── geographic_scope
+├── topic
+├── raw_value
+├── normalized_value
+├── confidence
+├── evidence_type
+└── metadata
+```
+
+La evidencia debe permitir responder:
+
+> "¿Por qué CHISMOSO cree esto?"
+
+Debe existir trazabilidad.
+
+Ejemplo:
+
+```text
+OPORTUNIDAD
+↓
+basada en 4 señales
+↓
+Signal A → Google Trends
+Signal B → Reddit
+Signal C → YouTube
+Signal D → Search/Web
+```
+
+Si no existe evidencia suficiente:
+
+> "Evidencia insuficiente."
+
+No inventar.
+
+---
+
+# 7. LAS TRES SALIDAS PRINCIPALES
+
+CHISMOSO debe producir principalmente tres tipos de inteligencia.
+
+---
+
+## 7.1 TREND
+
+Una tendencia es:
+
+> un patrón observable de crecimiento, cambio o comportamiento repetido a lo largo del tiempo o entre múltiples fuentes.
+
+Ejemplo:
+
+```text
+TREND
+
+Tema:
+Automatización de reservas para restaurantes pequeños
+
+Estado:
+Emergente
+
+Evidencia:
+- crecimiento de búsquedas;
+- aumento de conversaciones;
+- incremento de contenido;
+- aparición repetida del problema en comunidades.
+
+Confidence:
+0.81
+```
+
+---
+
+## 7.2 PROBLEM
+
+Problema emergente:
+
+> una necesidad, fricción, queja o dificultad que aparece repetidamente y puede estar aumentando.
+
+Ejemplo:
+
+```text
+PROBLEM
+
+Problema:
+Pequeños restaurantes pierden reservas gestionadas manualmente por WhatsApp.
+
+Evidence:
+...
+```
+
+---
+
+## 7.3 OPPORTUNITY
+
+Oportunidad:
+
+> una combinación de señal + problema + demanda potencial + posibilidad de intervención.
+
+Ejemplo:
+
+```text
+OPPORTUNITY
+
+Problema:
+Reservas manuales.
+
+Señal:
+Crecimiento de demanda.
+
+Segmento:
+Restaurantes pequeños.
+
+Posible solución:
+Automatización de reservas y seguimiento por WhatsApp.
+
+Opportunity Score:
+84/100
+```
+
+---
+
+# 8. NO CONFUNDIR TREND CON OPPORTUNITY
+
+Regla importante.
+
+No todo trend es una oportunidad.
+
+No todo problema es una oportunidad.
+
+Ejemplo:
+
+```text
+TREND:
+La gente está buscando más "cafeterías pet friendly".
+
+```
+
+Eso NO significa automáticamente:
+
+```text
+OPPORTUNITY:
+Crear una cafetería pet friendly.
+```
+
+Debe existir un razonamiento intermedio.
+
+CHISMOSO debe evaluar:
+
+```text
+TREND
++
+PROBLEM
++
+DEMAND
++
+TIMING
++
+MARKET
++
+FEASIBILITY
+=
+OPPORTUNITY
+```
+
+---
+
+# 9. FUENTES
+
+Diseña CHISMOSO para trabajar con múltiples tipos de fuentes.
+
+No acoples el núcleo a una sola plataforma.
+
+Categorías iniciales:
+
+### SEARCH / WEB
+
+Para descubrir:
+
+* páginas;
+* artículos;
+* consultas;
+* resultados;
+* señales de interés.
+
+### GOOGLE TRENDS / SEARCH TRENDS
+
+Para:
+
+* crecimiento de búsquedas;
+* comparación de términos;
+* evolución temporal;
+* estacionalidad.
+
+### REDDIT / COMMUNITIES
+
+Para:
+
+* problemas;
+* conversaciones;
+* preguntas repetidas;
+* frustraciones;
+* lenguaje real de usuarios.
+
+### YOUTUBE
+
+Para:
+
+* crecimiento de temas;
+* contenido emergente;
+* preguntas;
+* títulos;
+* frecuencia;
+* engagement cuando sea observable.
+
+### SOCIAL MEDIA
+
+Cuando sea técnicamente accesible y permitido:
+
+* Instagram;
+* X;
+* TikTok;
+* Facebook;
+* otras fuentes relevantes.
+
+NO asumir que todas estarán disponibles.
+
+Cada fuente debe tener un provider independiente.
+
+---
+
+# 10. NO IMPLEMENTAR TODAS LAS FUENTES A LA VEZ
+
+Esta regla es crítica.
+
+No quiero 30 integraciones incompletas.
+
+Primero construir:
+
+```text
+CORE
++
+PROVIDER ABSTRACTION
++
+2–3 FUENTES REALES
++
+EVIDENCE ENGINE
++
+SIGNAL ENGINE
++
+TREND DETECTION
++
+OPPORTUNITY ENGINE
++
+MEMORY
++
+REPORTING
+```
+
+Después ampliar.
+
+Si una API requiere credenciales que no están disponibles:
+
+NO SIMULARLA.
+
+Marcarla como:
+
+```text
+UNAVAILABLE
+```
+
+y permitir que el sistema continúe con las fuentes disponibles.
+
+---
+
+# 11. PROVIDER ABSTRACTION
+
+Crear una arquitectura similar conceptualmente a:
+
+```text
+Provider
+├── canHandle()
+├── health()
+├── search()
+├── collect()
+├── normalize()
+└── capabilities()
+```
+
+Cada provider debe declarar:
+
+```text
+name
+type
+capabilities
+status
+limits
+authentication
+```
+
+Ejemplo:
+
+```text
+GoogleTrendsProvider
+RedditProvider
+WebSearchProvider
+YouTubeProvider
+```
+
+No permitir que el resto del sistema dependa directamente de APIs externas.
+
+---
+
+# 12. ERROR TAXONOMY
+
+Normalizar errores.
+
+Como mínimo:
+
+```text
+OK
+TEMPORARY_FAILURE
+AUTH_FAILURE
+RATE_LIMIT
+EMPTY_RESULT
+INVALID_INPUT
+TIMEOUT
+PROVIDER_UNAVAILABLE
+PARSE_ERROR
+QUOTA_EXCEEDED
+```
+
+El comportamiento debe depender del tipo.
+
+Ejemplo:
+
+```text
+RATE_LIMIT
+→ esperar / retry controlado
+
+AUTH_FAILURE
+→ no repetir inútilmente
+
+EMPTY_RESULT
+→ intentar otra estrategia
+
+TIMEOUT
+→ retry limitado
+
+PROVIDER_UNAVAILABLE
+→ fallback
+
+PARSE_ERROR
+→ registrar evidencia del fallo
+```
+
+No utilizar:
+
+```text
+retry everything
+```
+
+---
+
+# 13. SIGNAL NORMALIZATION
+
+Todas las fuentes deben convertirse a un modelo común.
+
+Conceptualmente:
+
+```text
+Raw Source
+↓
+Normalizer
+↓
+Signal
+```
+
+Modelo conceptual:
+
+```text
+Signal {
+    id
+    topic
+    keyword
+    source
+    sourceType
+    timestamp
+    geography
+    metric
+    value
+    normalizedValue
+    direction
+    velocity
+    confidence
+    evidence
+}
+```
+
+La implementación final puede modificar los campos si existe una razón técnica, pero debe conservar esta semántica.
+
+---
+
+# 14. SIGNAL TYPES
+
+Diseñar inicialmente categorías como:
+
+```text
+SEARCH_SPIKE
+MENTION_SPIKE
+QUESTION_SPIKE
+COMPLAINT_SPIKE
+CONTENT_GROWTH
+ENGAGEMENT_GROWTH
+NEW_PRODUCT
+NEW_BEHAVIOR
+PRICE_CHANGE
+DEMAND_SIGNAL
+PROBLEM_SIGNAL
+MARKET_SIGNAL
+```
+
+No es necesario implementarlas todas inmediatamente.
+
+Pero el modelo debe poder crecer.
+
+---
+
+# 15. TREND DETECTION ENGINE
+
+Este es uno de los componentes centrales.
+
+Debe poder determinar si una señal constituye:
+
+```text
+NOISE
+WEAK_SIGNAL
+EMERGING_TREND
+STRONG_TREND
+ESTABLISHED_TREND
+DECLINING_TREND
+```
+
+No depender exclusivamente de un LLM.
+
+Siempre que sea posible, usar métricas.
+
+Variables posibles:
+
+```text
+growth
+velocity
+acceleration
+frequency
+persistence
+cross_source_confirmation
+geographic_spread
+engagement
+recency
+seasonality
+```
+
+Ejemplo conceptual:
+
+```text
+Trend Score =
+Growth
++ Persistence
++ Cross-source confirmation
++ Recency
++ Velocity
+- Noise
+```
+
+No inventes una fórmula arbitraria y la presentes como científica.
+
+Documenta claramente cualquier scoring heurístico.
+
+---
+
+# 16. CROSS-SOURCE CONFIRMATION
+
+Esta capacidad es fundamental.
+
+Una señal encontrada en una única fuente debe tener menor confianza.
+
+Ejemplo:
+
+```text
+Google Trends
+    ↓
+signal
+
+Reddit
+    ↓
+signal
+
+YouTube
+    ↓
+signal
+
+Web
+    ↓
+signal
+```
+
+Si las señales apuntan hacia el mismo fenómeno:
+
+```text
+CROSS-SOURCE CONFIRMATION
+```
+
+aumenta la confianza.
+
+Ejemplo:
+
+```text
+1 fuente:
+confidence = low
+
+2 fuentes independientes:
+confidence = medium
+
+3+ fuentes independientes:
+confidence = high
+```
+
+La fórmula exacta puede evolucionar.
+
+No hardcodear falsas certezas.
+
+---
+
+# 17. TEMPORAL MEMORY
+
+CHISMOSO NO DEBE TENER MEMORIA únicamente conversacional.
+
+Debe recordar señales y su evolución.
+
+Necesitamos poder responder:
+
+> "¿Esto ya lo habíamos visto?"
+
+y:
+
+> "¿Está creciendo o desapareciendo?"
+
+Modelo conceptual:
+
+```text
+Observation
+↓
+Signal
+↓
+Topic
+↓
+Historical observations
+↓
+Trend evolution
+```
+
+La memoria debe permitir:
+
+```text
+first_seen
+last_seen
+observation_count
+sources_count
+growth_history
+status_history
+```
+
+---
+
+# 18. TOPIC CLUSTERING
+
+Diferentes expresiones pueden representar el mismo fenómeno.
+
+Ejemplo:
+
+```text
+"reservas por WhatsApp"
+"agendar por WhatsApp"
+"reservas restaurante WhatsApp"
+"automatizar reservas WhatsApp"
+```
+
+pueden pertenecer a:
+
+```text
+TOPIC:
+WhatsApp restaurant reservation automation
+```
+
+Diseñar un mecanismo de agrupación.
+
+Puede usar:
+
+* normalización;
+* keywords;
+* embeddings si realmente aportan valor;
+* LLM;
+* reglas híbridas.
+
+No introducir infraestructura pesada sin necesidad.
+
+---
+
+# 19. PROBLEM DETECTION
+
+CHISMOSO debe poder detectar problemas a partir de señales como:
+
+```text
+complaints
+questions
+repeated frustrations
+manual work
+high friction
+negative sentiment
+repeated requests
+"how do I..."
+"why doesn't..."
+"does anyone know..."
+```
+
+Pero:
+
+> sentimiento negativo ≠ automáticamente problema de negocio.
+
+Debe existir evidencia de repetición, relevancia o intensidad.
+
+---
+
+# 20. OPPORTUNITY ENGINE
+
+El Opportunity Engine convierte inteligencia en posibilidades accionables.
+
+Modelo conceptual:
+
+```text
+Opportunity {
+    id
+    title
+    problem
+    target_segment
+    geography
+    evidence
+    trend
+    demand
+    timing
+    competition
+    monetization
+    feasibility
+    score
+    confidence
+    created_at
+}
+```
+
+Debe responder:
+
+### Qué está ocurriendo?
+
+### A quién afecta?
+
+### Qué problema existe?
+
+### Qué evidencia tenemos?
+
+### Por qué puede ser importante?
+
+### Por qué ahora?
+
+### Qué se podría vender/crear?
+
+### Qué tan grande parece la oportunidad?
+
+### Qué tan incierta es?
+
+---
+
+# 21. OPPORTUNITY SCORING
+
+Crear un score transparente.
+
+Conceptualmente:
+
+```text
+Opportunity Score
+=
+Demand
++
+Growth
++
+Problem Severity
++
+Monetization Potential
++
+Timing
++
+Market Fit
+-
+Competition
+-
+Uncertainty
+```
+
+No quiero un número mágico.
+
+El reporte debe explicar por qué recibió ese score.
+
+Ejemplo:
+
+```text
+Opportunity Score: 82/100
+
+Demand: 86
+Growth: 91
+Problem Severity: 74
+Monetization: 83
+Timing: 89
+Competition: 51
+Uncertainty: 28
+```
+
+La escala y pesos deben quedar documentados.
+
+---
+
+# 22. CHISMOSO NO DEBE VENDER HUMO
+
+Regla de oro:
+
+Nunca producir:
+
+> "Esta oportunidad va a generar mucho dinero."
+
+Debe producir:
+
+> "La evidencia disponible sugiere una oportunidad potencial de X, con confianza Y y estas limitaciones."
+
+Separar:
+
+```text
+OBSERVATION
+ANALYSIS
+HYPOTHESIS
+OPPORTUNITY
+CONFIDENCE
+UNCERTAINTY
+```
+
+---
+
+# 23. RESEARCH PLANNER
+
+El agente debe poder decidir qué investigar.
+
+Ejemplo:
+
+Usuario:
+
+> "Busca oportunidades emergentes en automatización para pequeños negocios en Colombia."
+
+CHISMOSO podría decidir:
+
+```text
+1. Detectar temas de crecimiento.
+2. Buscar problemas repetidos.
+3. Analizar señales de demanda.
+4. Buscar confirmación en otras fuentes.
+5. Agrupar temas.
+6. Puntuar.
+7. generar oportunidades.
+```
+
+No obligar al usuario a especificar el procedimiento.
+
+---
+
+# 24. QUERY GENERATION
+
+El agente debe poder generar búsquedas adicionales.
+
+Ejemplo:
+
+```text
+tema:
+"reservas restaurantes WhatsApp"
+
+queries:
+"restaurant WhatsApp booking problems"
+"restaurantes reservas WhatsApp Colombia"
+"WhatsApp reservation restaurant complaints"
+"restaurant booking automation"
+```
+
+Debe poder ampliar/reformular búsquedas cuando la primera investigación sea débil.
+
+---
+
+# 25. INVESTIGATION LOOP
+
+Implementar un loop controlado:
+
+```text
+PLAN
+↓
+SEARCH
+↓
+EVALUATE
+↓
+DO WE HAVE ENOUGH EVIDENCE?
+├── YES → ANALYZE
+└── NO → EXPAND SEARCH
+```
+
+Con límites.
+
+No permitir loops infinitos.
+
+---
+
+# 26. AUTONOMY BUDGET
+
+Toda investigación debe tener límites:
+
+```text
+max_iterations
+max_queries
+max_sources
+max_results
+max_runtime
+max_provider_calls
+```
+
+El agente debe poder terminar con:
+
+```text
+INSUFFICIENT_EVIDENCE
+```
+
+en vez de seguir investigando indefinidamente.
+
+---
+
+# 27. REPORT ENGINE
+
+El resultado final debe ser inteligencia legible.
+
+No devolver una montaña de JSON.
+
+Ejemplo:
+
+```text
+# CHISMOSO INTELLIGENCE REPORT
+
+## Pregunta
+...
+
+## Resumen ejecutivo
+...
+
+## Tendencias detectadas
+
+1. ...
+   Confidence: 84%
+   Evidence: 4 sources
+
+2. ...
+
+## Problemas emergentes
+
+1. ...
+
+## Oportunidades
+
+### Opportunity #1
+...
+Score: 87/100
+
+Why now:
+...
+
+Evidence:
+...
+
+Uncertainty:
+...
+
+## Signals
+...
+
+## Sources
+...
+
+## Recommended next action
+...
+```
+
+---
+
+# 28. MACHINE-READABLE OUTPUT
+
+Aunque el reporte sea humano, debe existir un formato estructurado.
+
+Por ejemplo:
+
+```text
+IntelligenceReport
+├── query
+├── scope
+├── trends[]
+├── problems[]
+├── opportunities[]
+├── signals[]
+├── evidence[]
+├── confidence
+├── limitations
+└── generated_at
+```
+
+Esto permitirá que otros agentes consuman la información.
+
+---
+
+# 29. INTEROPERABILIDAD
+
+Diseñar desde el principio para que CHISMOSO pueda producir:
+
+```text
+Opportunity
+```
+
+que otro agente pueda consumir.
+
+Ejemplo:
+
+```text
+CHISMOSO
+↓
+Opportunity
+↓
+AGENTE-LEADS
+↓
+buscar empresas afectadas
+↓
+Lead Intelligence
+↓
+CRM-ALBRA
+```
+
+CHISMOSO NO debe hacer la búsqueda masiva de leads.
+
+Debe entregar inteligencia estructurada.
+
+---
+
+# 30. EVENTUAL CONTRATO ENTRE AGENTES
+
+Diseñar conceptualmente un contrato:
+
+```text
+Opportunity {
+    id
+    title
+    description
+    problem
+    segment
+    geography
+    evidence
+    trend
+    confidence
+    score
+    suggested_next_agent
+}
+```
+
+Ejemplo:
+
+```text
+suggested_next_agent:
+"AGENTE-LEADS"
+```
+
+No implementar todavía un sistema distribuido complejo.
+
+Primero establecer el contrato.
+
+---
+
+# 31. STORAGE
+
+SQLite es suficiente para V1 si ya existe infraestructura reutilizable.
+
+No introducir PostgreSQL, Redis, Kafka, vector DB, Elasticsearch, etc. solo porque "podrían ser útiles".
+
+Primero demostrar valor.
+
+Tablas conceptuales:
+
+```text
+topics
+signals
+evidence
+trend_observations
+trends
+problems
+opportunities
+investigations
+sources
+provider_runs
+```
+
+Puede simplificarse si una estructura inicial más pequeña cubre el problema correctamente.
+
+---
+
+# 32. OBSERVABILITY
+
+Cada investigación debe registrar:
+
+```text
+investigation_id
+started_at
+completed_at
+query
+providers_used
+queries_executed
+signals_found
+evidence_found
+trends_found
+opportunities_found
+errors
+duration
+status
+```
+
+Estados:
+
+```text
+RUNNING
+COMPLETED
+PARTIAL
+FAILED
+INSUFFICIENT_EVIDENCE
+```
+
+---
+
+# 33. PROVIDER HEALTH
+
+Cada provider debe poder reportar:
+
+```text
+OK
+DEGRADED
+UNAVAILABLE
+AUTH_REQUIRED
+RATE_LIMITED
+```
+
+CHISMOSO debe continuar con otras fuentes cuando sea posible.
+
+---
+
+# 34. FALLBACK
+
+Ejemplo:
+
+```text
+Provider A
+↓
+RATE_LIMIT
+↓
+Provider B
+↓
+OK
+```
+
+El reporte debe registrar que ocurrió.
+
+Nunca ocultar fallos importantes.
+
+---
+
+# 35. SECURITY
+
+No almacenar:
+
+* API keys;
+* tokens;
+* passwords;
+* credentials
+
+en código.
+
+Usar `.env` / secrets.
+
+Nunca imprimir credenciales en logs.
+
+Sanitizar errores.
+
+---
+
+# 36. ANTI-HALLUCINATION
+
+Toda salida generada por LLM que contenga afirmaciones importantes debe estar vinculada a evidencia.
+
+No permitir frases como:
+
+> "El mercado está creciendo rápidamente"
+
+sin evidencia.
+
+Preferir:
+
+> "Se observaron señales de crecimiento en X fuentes durante Y período."
+
+---
+
+# 37. NO INVENTAR DATOS
+
+Está estrictamente prohibido:
+
+* inventar métricas;
+* inventar búsquedas;
+* inventar resultados;
+* inventar URLs;
+* inventar engagement;
+* inventar crecimiento;
+* inventar fuentes;
+* simular respuestas de APIs;
+* devolver "datos de ejemplo" como si fueran reales.
+
+Si una integración no está disponible:
+
+```text
+UNAVAILABLE
+```
+
+Si una métrica no existe:
+
+```text
+UNKNOWN
+```
+
+---
+
+# 38. TESTING
+
+No considerar terminado el agente solo porque compila.
+
+Necesitamos pruebas:
+
+### UNIT
+
+* normalización;
+* scoring;
+* dedup;
+* trend detection;
+* topic clustering;
+* error taxonomy.
+
+### PROVIDER
+
+Mock/integration tests cuando corresponda.
+
+### PIPELINE
+
+```text
+query
+→ collect
+→ normalize
+→ analyze
+→ score
+→ report
+```
+
+### E2E
+
+Ejemplo:
+
+> "Detecta oportunidades emergentes relacionadas con automatización para pequeños restaurantes en Colombia."
+
+Debe producir:
+
+```text
+investigation
+signals
+evidence
+trend/problem
+opportunity
+report
+```
+
+y demostrar que cada afirmación importante tiene trazabilidad.
+
+---
+
+# 39. TEST DE REALIDAD
+
+Crear una prueba específica para evitar capacidades falsas.
+
+Si un provider no está configurado:
+
+```text
+provider status = unavailable
+```
+
+No:
+
+```text
+fake successful response
+```
+
+Si no hay suficiente evidencia:
+
+```text
+confidence low
+status insufficient evidence
+```
+
+No:
+
+```text
+invented trend
+```
+
+---
+
+# 40. INTERFAZ
+
+La interfaz inicial puede ser Telegram/CLI/API según la infraestructura disponible.
+
+Pero:
+
+> La interfaz NO es el cerebro.
+
+Separar:
+
+```text
+INTERFACE
+↓
+ORCHESTRATOR
+↓
+CAPABILITIES
+```
+
+Telegram puede cambiarse posteriormente por:
+
+* Web;
+* API;
+* Dashboard;
+* CRM;
+* otro agente.
+
+---
+
+# 41. LLM
+
+Puedes reutilizar el patrón que hemos usado en otros agentes:
+
+```text
+LLM
+↓
+Agent Loop
+↓
+Tool Registry
+↓
+Tools
+```
+
+Pero no copies ciegamente otro agente.
+
+Adapta el patrón al problema de inteligencia.
+
+El LLM debe ser responsable principalmente de:
+
+* interpretar intención;
+* generar hipótesis;
+* planificar investigación;
+* seleccionar herramientas;
+* interpretar resultados;
+* sintetizar;
+* explicar incertidumbre.
+
+No debe encargarse directamente de:
+
+* scraping;
+* persistencia;
+* dedup;
+* retries;
+* provider authentication;
+* scoring determinista;
+* almacenamiento.
+
+---
+
+# 42. TOOL REGISTRY
+
+Las herramientas deben ser especializadas.
+
+Conceptualmente:
+
+```text
+search_web
+collect_trends
+collect_social_signals
+search_community
+search_youtube
+get_topic_history
+analyze_signals
+detect_trends
+detect_problems
+generate_opportunities
+get_evidence
+save_intelligence
+generate_report
+```
+
+No crear todas obligatoriamente ahora.
+
+Construir las mínimas necesarias para V1.
+
+---
+
+# 43. NO SOBRECARGAR EL AGENTE
+
+NO agregar ahora:
+
+* generación de contenido;
+* publicación automática;
+* campañas;
+* email marketing;
+* CRM completo;
+* scraping masivo de leads;
+* trading;
+* procurement;
+* YouTube automation;
+* gestión financiera;
+* agentes de ventas;
+* customer support;
+* WhatsApp automation.
+
+Eso pertenece a otros sistemas.
+
+---
+
+# 44. CHISMOSO VS AGENTE-LEADS
+
+Mantener esta frontera:
+
+```text
+CHISMOSO
+
+¿Qué está pasando?
+¿Por qué podría importar?
+¿Está creciendo?
+¿Hay un problema?
+¿Hay una oportunidad?
+```
+
+vs.
+
+```text
+AGENTE-LEADS
+
+¿Quién está afectado?
+¿Quién podría comprar?
+¿Dónde está?
+¿Cómo contacto?
+¿Qué tan buen prospecto es?
+```
+
+Ejemplo:
+
+CHISMOSO descubre:
+
+> "Los restaurantes pequeños están mostrando creciente interés por automatizar reservas vía WhatsApp."
+
+AGENTE-LEADS recibe:
+
+```text
+Opportunity
+```
+
+y ejecuta:
+
+> "Encuentra restaurantes pequeños en Medellín que tengan esta necesidad."
+
+No mezclar las responsabilidades.
+
+---
+
+# 45. CHISMOSO VS NEX-SCOPE
+
+NEX-SCOPE puede especializarse en:
+
+```text
+YouTube intelligence
+```
+
+CHISMOSO puede utilizar YouTube como una fuente adicional.
+
+Pero CHISMOSO no debe absorber todas las funciones de NEX-SCOPE.
+
+---
+
+# 46. CHISMOSO VS RADAR-SECOP2
+
+RADAR-SECOP2:
+
+```text
+contratación pública
+licitaciones
+entidades
+procesos
+```
+
+CHISMOSO:
+
+```text
+señales generales
+tendencias
+problemas
+oportunidades
+```
+
+Puede eventualmente consumir información proveniente de otros agentes, pero no reemplazarlos.
+
+---
+
+# 47. ARQUITECTURA OBJETIVO
+
+Construir una arquitectura conceptual cercana a:
+
+```text
+                    USER
+                     ↓
+               INTERFACE
+                     ↓
+               ORCHESTRATOR
+                     ↓
+              RESEARCH PLANNER
+                     ↓
+          ┌──────────┴──────────┐
+          ↓                     ↓
+     PROVIDERS              MEMORY
+          ↓                     ↓
+     COLLECTORS             HISTORY
+          ↓
+     NORMALIZERS
+          ↓
+        SIGNALS
+          ↓
+    ┌─────┴──────┐
+    ↓            ↓
+TREND ENGINE   PROBLEM ENGINE
+    ↓            ↓
+    └─────┬──────┘
+          ↓
+  OPPORTUNITY ENGINE
+          ↓
+       SCORING
+          ↓
+       EVIDENCE
+          ↓
+       REPORTING
+          ↓
+   MACHINE OUTPUT
+          ↓
+ OTHER AGENTS / CRM
+```
+
+---
+
+# 48. CARPETA OBJETIVO
+
+No crear esta estructura ciegamente.
+
+Adapta la arquitectura al repo real.
+
+Pero conceptualmente:
+
+```text
+src/
+  agent/
+    orchestrator/
+    planning/
+    tools/
+
+  intelligence/
+    signals/
+    trends/
+    problems/
+    opportunities/
+    scoring/
+    clustering/
+
+  providers/
+    search/
+    trends/
+    communities/
+    youtube/
+    social/
+
+  evidence/
+    models/
+    storage/
+    validation/
+
+  database/
+    migrations/
+    repositories/
+
+  reports/
+
+  integrations/
+
+  interfaces/
+
+  config/
+
+  index.ts
+```
+
+No conviertas esto en una obligación de crear 40 archivos.
+
+La arquitectura debe emerger de las necesidades reales.
+
+---
+
+# 49. FASES DE CONSTRUCCIÓN
+
+## FASE 0 — AUDITORÍA
+
+Antes de escribir código:
+
+Inspecciona completamente el repo/entorno disponible.
+
+Entrega:
+
+```text
+CURRENT STATE
+ARCHITECTURE
+EXISTING COMPONENTS
+REUSABLE COMPONENTS
+TECHNICAL DEBT
+MISSING CAPABILITIES
+RISKS
+PROPOSED V1 ARCHITECTURE
+FILES TO CREATE
+FILES TO MODIFY
+FILES TO PRESERVE
+```
+
+NO IMPLEMENTES TODAVÍA.
+
+Primero entiende.
+
+---
+
+# 50. FASE 1 — FOUNDATION
+
+Construir:
+
+```text
+Canonical models
+Provider abstraction
+Error taxonomy
+Evidence model
+SQLite foundation
+Observability
+```
+
+Validar.
+
+---
+
+# 51. FASE 2 — COLLECTION
+
+Construir 2–3 fuentes reales.
+
+Priorizar fuentes con:
+
+* buena disponibilidad;
+* utilidad;
+* bajo acoplamiento;
+* facilidad de prueba;
+* coste razonable.
+
+No implementar una fuente solo porque "sería cool".
+
+---
+
+# 52. FASE 3 — SIGNAL ENGINE
+
+Implementar:
+
+```text
+normalization
+dedup
+topic grouping
+signal classification
+```
+
+---
+
+# 53. FASE 4 — INTELLIGENCE
+
+Implementar:
+
+```text
+trend detection
+problem detection
+cross-source confirmation
+confidence
+historical evolution
+```
+
+---
+
+# 54. FASE 5 — OPPORTUNITY ENGINE
+
+Implementar:
+
+```text
+opportunity extraction
+scoring
+ranking
+evidence linkage
+uncertainty
+```
+
+---
+
+# 55. FASE 6 — ORCHESTRATOR
+
+Conectar:
+
+```text
+USER
+↓
+PLAN
+↓
+COLLECT
+↓
+ANALYZE
+↓
+VALIDATE
+↓
+SCORE
+↓
+REPORT
+```
+
+---
+
+# 56. FASE 7 — INTEROPERABILITY
+
+Definir el contrato:
+
+```text
+Opportunity → AGENTE-LEADS
+```
+
+Sin construir todavía un sistema distribuido complejo.
+
+---
+
+# 57. CRITERIOS DE TERMINACIÓN
+
+NO consideres el proyecto terminado porque:
+
+```text
+npm install
+npm run build
+```
+
+funcionan.
+
+Debe cumplirse:
+
+### Architecture
+
+* separación clara de responsabilidades;
+* providers desacoplados;
+* inteligencia separada de acceso a datos;
+* interfaz separada del core.
+
+### Truthfulness
+
+* ninguna capacidad falsa;
+* ningún dato inventado;
+* ningún provider simulado presentado como real.
+
+### Evidence
+
+* señales trazables;
+* tendencias respaldadas;
+* oportunidades con evidencia.
+
+### Memory
+
+* persistencia funcional;
+* historial;
+* evolución.
+
+### Intelligence
+
+* detección de señales;
+* tendencias;
+* problemas;
+* oportunidades.
+
+### Autonomy
+
+* una investigación completa puede ejecutarse con una instrucción de alto nivel.
+
+### Reliability
+
+* retries;
+* fallbacks;
+* errores normalizados;
+* timeouts;
+* límites.
+
+### Testing
+
+* unit;
+* integration donde corresponda;
+* E2E.
+
+---
+
+# 58. DEFINITION OF DONE
+
+CHISMOSO V1.0 está terminado cuando puede recibir algo como:
+
+> "Investiga qué tendencias y problemas emergentes podrían generar oportunidades de negocio para automatización de pequeños restaurantes en Colombia."
+
+y devolver:
+
+```text
+INVESTIGATION
+↓
+REAL SOURCES
+↓
+REAL SIGNALS
+↓
+NORMALIZED EVIDENCE
+↓
+DETECTED TRENDS
+↓
+DETECTED PROBLEMS
+↓
+OPPORTUNITIES
+↓
+SCORES
+↓
+CONFIDENCE
+↓
+LIMITATIONS
+↓
+ACTIONABLE REPORT
+```
+
+y además almacenar la inteligencia para poder comparar posteriormente:
+
+```text
+¿Está creciendo?
+¿Está cayendo?
+¿Ya lo habíamos detectado?
+¿Apareció en nuevas fuentes?
+¿La confianza aumentó?
+```
+
+---
+
+# 59. PRINCIPIOS ANTI-SCOPE-CREEP
+
+Durante la construcción:
+
+NO agregar funcionalidades porque:
+
+> "podrían ser útiles".
+
+NO agregar dependencias porque:
+
+> "algún día las necesitaremos".
+
+NO construir infraestructura distribuida antes de necesitarla.
+
+NO construir dashboards complejos antes de demostrar el motor.
+
+NO construir 15 providers antes de validar el pipeline.
+
+NO convertir CHISMOSO en AGENTE-LEADS.
+
+NO convertir CHISMOSO en NEX-SCOPE.
+
+NO convertir CHISMOSO en un agente de noticias.
+
+NO convertir CHISMOSO en un chatbot genérico.
+
+---
+
+# 60. PRINCIPIO DE REALIDAD
+
+Cada vez que implementes una capacidad debes poder responder:
+
+```text
+¿Qué problema resuelve?
+¿Qué evidencia demuestra que funciona?
+¿Cómo se prueba?
+¿Qué ocurre si falla?
+¿Qué ocurre si no hay datos?
+```
+
+Si no puedes responderlo:
+
+NO IMPLEMENTAR.
+
+---
+
+# 61. PRINCIPIO DE EVOLUCIÓN
+
+V1 debe ser pequeña pero arquitectónicamente correcta.
+
+Preferimos:
+
+```text
+3 providers reales
++
+pipeline sólido
++
+evidence
++
+memory
++
+trend detection
+```
+
+antes que:
+
+```text
+15 providers
++
+100 herramientas
++
+5000 líneas
++
+capacidades falsas
+```
+
+---
+
+# 62. ENTREGA DEL CONSTRUCTOR
+
+Al finalizar cada fase, reporta:
+
+```text
+1. WHAT WAS BUILT
+2. WHAT WAS PRESERVED
+3. WHAT WAS CHANGED
+4. WHAT WAS REMOVED
+5. FILES CREATED
+6. FILES MODIFIED
+7. ARCHITECTURAL DECISIONS
+8. TESTS
+9. TEST RESULTS
+10. REAL CAPABILITIES
+11. CURRENT LIMITATIONS
+12. NEXT RECOMMENDED STEP
+```
+
+No ocultes problemas.
+
+No maquilles resultados.
+
+---
+
+# 63. PRIMERA INSTRUCCIÓN OPERATIVA
+
+Comienza AHORA.
+
+Pero sigue estrictamente este orden:
+
+### STEP 1
+
+Audita el entorno/repositorio disponible.
+
+### STEP 2
+
+No modifiques código todavía.
+
+### STEP 3
+
+Identifica:
+
+```text
+CURRENT STATE
+REUSABLE COMPONENTS
+MISSING COMPONENTS
+ARCHITECTURAL RISKS
+DEPENDENCIES
+PROVIDER OPTIONS
+```
+
+### STEP 4
+
+Propón la arquitectura V1 concreta basada en el repo REAL.
+
+### STEP 5
+
+Propón:
+
+```text
+FILES TO CREATE
+FILES TO MODIFY
+FILES TO PRESERVE
+FILES TO REMOVE
+```
+
+### STEP 6
+
+Define el plan de implementación por fases.
+
+### STEP 7
+
+Detente y presenta esa auditoría/plan antes de realizar cambios estructurales importantes.
+
+Después de mi aprobación explícita, comienza la implementación.
+
+---
+
+# 64. REGLA FINAL
+
+Recuerda permanentemente:
+
+> **CHISMOSO no existe para saberlo todo. Existe para detectar antes que otros qué está empezando a importar.**
+
+Su valor no está en recopilar millones de datos.
+
+Su valor está en convertir:
+
+```text
+RUIDO
+↓
+SEÑAL
+↓
+PATRÓN
+↓
+INTELIGENCIA
+↓
+OPORTUNIDAD
+```
+
+Y su lugar dentro del ecosistema es:
+
+```text
+                    CHISMOSO
+                       ↓
+                OPPORTUNITY
+                       ↓
+                 AGENTE-LEADS
+                       ↓
+                LEAD INTELLIGENCE
+                       ↓
+                  CRM-ALBRA
+                       ↓
+                     VENTA
+```
+
+Construye el sistema respetando esa separación.
+
+No construyas un monstruo.
+
+Construye un especialista.

@@ -1,0 +1,2002 @@
+     1→# PROMPT MAESTRO — CONSTRUCCIÓN DEL AGENTE CHISMOSO V1.0
+     2→
+     3→## 0. ROL DEL CONSTRUCTOR
+     4→
+     5→Actúa como **arquitecto principal, ingeniero de sistemas y constructor autónomo** del nuevo agente denominado:
+     6→
+     7→# CHISMOSO
+     8→
+     9→No quiero un chatbot genérico.
+    10→
+    11→No quiero un scraper con una interfaz de chat.
+    12→
+    13→No quiero un agregador de noticias.
+    14→
+    15→No quiero otro AGENTE-LEADS.
+    16→
+    17→No quiero una "navaja suiza" que intente hacer de todo.
+    18→
+    19→Quiero construir un **agente especializado de inteligencia de señales, tendencias, problemas emergentes y oportunidades de negocio** que forme parte de un ecosistema mayor de agentes.
+    20→
+    21→Tu trabajo es:
+    22→
+    23→1. estudiar cuidadosamente esta especificación;
+    24→2. auditar el entorno/repo antes de construir;
+    25→3. diseñar la arquitectura real;
+    26→4. implementar únicamente lo que corresponda a V1;
+    27→5. validar que las capacidades realmente funcionen;
+    28→6. evitar funcionalidades ficticias o simuladas;
+    29→7. dejar una base sólida para evolución futura;
+    30→8. documentar claramente qué existe, qué no existe y qué queda pendiente.
+    31→
+    32→---
+    33→
+    34→# 1. CONTEXTO DEL ECOSISTEMA
+    35→
+    36→CHISMOSO NO EXISTE AISLADO.
+    37→
+    38→Forma parte de una arquitectura de agentes especializados.
+    39→
+    40→La separación de responsabilidades es fundamental.
+    41→
+    42→Actualmente existen o se están construyendo otros especialistas:
+    43→
+    44→### AGENTE-LEADS
+    45→
+    46→Pregunta principal:
+    47→
+    48→> "¿Quiénes podrían ser nuestros clientes?"
+    49→
+    50→Responsabilidad:
+    51→
+    52→* descubrir empresas/personas potencialmente compradoras;
+    53→* investigar prospectos;
+    54→* enriquecer perfiles;
+    55→* validar información;
+    56→* deduplicar;
+    57→* puntuar leads;
+    58→* producir Lead Intelligence;
+    59→* eventualmente enviar resultados a CRM-ALBRA.
+    60→
+    61→NO debe detectar tendencias de mercado de forma general.
+    62→
+    63→---
+    64→
+    65→### CHISMOSO
+    66→
+    67→Pregunta principal:
+    68→
+    69→> "¿Qué está empezando a pasar?"
+    70→
+    71→Responsabilidad:
+    72→
+    73→* detectar señales;
+    74→* descubrir tendencias;
+    75→* detectar problemas emergentes;
+    76→* detectar cambios de comportamiento;
+    77→* identificar oportunidades;
+    78→* correlacionar señales procedentes de distintas fuentes;
+    79→* distinguir ruido de señales relevantes;
+    80→* construir inteligencia accionable;
+    81→* conservar evidencia;
+    82→* observar evolución temporal;
+    83→* generar oportunidades que puedan ser consumidas por otros agentes.
+    84→
+    85→CHISMOSO NO debe convertirse en AGENTE-LEADS.
+    86→
+    87→---
+    88→
+    89→### NEX-SCOPE
+    90→
+    91→Especialista en inteligencia relacionada con YouTube.
+    92→
+    93→---
+    94→
+    95→### RADAR-SECOP2
+    96→
+    97→Especialista en inteligencia de contratación pública.
+    98→
+    99→---
+   100→
+   101→### AGENTE-TRADING
+   102→
+   103→Especialista en mercados/trading.
+   104→
+   105→---
+   106→
+   107→### CRM-ALBRA
+   108→
+   109→Sistema comercial/CRM que eventualmente puede recibir oportunidades y leads provenientes de otros agentes.
+   110→
+   111→---
+   112→
+   113→# 2. MISIÓN CENTRAL DE CHISMOSO
+   114→
+   115→La misión de CHISMOSO es:
+   116→
+   117→> **observar el entorno digital, identificar señales tempranas, convertir señales dispersas en inteligencia estructurada y descubrir tendencias, problemas y oportunidades antes de que sean obvias para todos.**
+   118→
+   119→CHISMOSO debe pasar de:
+   120→
+   121→```text
+   122→DATOS
+   123→↓
+   124→SEÑALES
+   125→↓
+   126→PATRONES
+   127→↓
+   128→TENDENCIAS / PROBLEMAS
+   129→↓
+   130→OPORTUNIDADES
+   131→↓
+   132→INTELIGENCIA ACCIONABLE
+   133→```
+   134→
+   135→No debe limitarse a devolver enlaces.
+   136→
+   137→No debe limitarse a resumir noticias.
+   138→
+   139→No debe confundir volumen de menciones con importancia.
+   140→
+   141→No debe declarar una tendencia porque encontró una sola publicación.
+   142→
+   143→---
+   144→
+   145→# 3. PRINCIPIO FUNDAMENTAL
+   146→
+   147→La arquitectura debe seguir este principio:
+   148→
+   149→```text
+   150→LLM = INTELIGENCIA / INTERPRETACIÓN / PLANIFICACIÓN
+   151→
+   152→TOOLS = CAPACIDADES
+   153→
+   154→PROVIDERS = ACCESO A FUENTES EXTERNAS
+   155→
+   156→COLLECTORS = OBTENCIÓN DE SEÑALES
+   157→
+   158→NORMALIZERS = NORMALIZACIÓN
+   159→
+   160→EVIDENCE = VERDAD OBSERVABLE
+   161→
+   162→ANALYSIS = INTERPRETACIÓN
+   163→
+   164→SCORING = EVALUACIÓN
+   165→
+   166→MEMORY = HISTORIAL / EVOLUCIÓN
+   167→
+   168→REPORT = COMUNICACIÓN
+   169→
+   170→INTERFACE = INTERACCIÓN CON EL USUARIO
+   171→```
+   172→
+   173→No mezcles estas responsabilidades.
+   174→
+   175→El LLM NO debe contener dentro del prompt toda la lógica operacional.
+   176→
+   177→Las herramientas no deben contener inteligencia de negocio compleja.
+   178→
+   179→Los proveedores externos no deben contaminar el modelo interno.
+   180→
+   181→---
+   182→
+   183→# 4. PRINCIPIO DE AUTONOMÍA
+   184→
+   185→CHISMOSO debe poder recibir una instrucción relativamente simple como:
+   186→
+   187→> "Investiga qué está empezando a crecer en el mercado de restaurantes en Colombia y dime qué oportunidades de negocio podrían aparecer."
+   188→
+   189→y resolver internamente:
+   190→
+   191→```text
+   192→INTERPRETAR OBJETIVO
+   193→↓
+   194→DEFINIR ÁMBITO
+   195→↓
+   196→PLANIFICAR INVESTIGACIÓN
+   197→↓
+   198→SELECCIONAR FUENTES
+   199→↓
+   200→RECOPILAR SEÑALES
+   201→↓
+   202→NORMALIZAR
+   203→↓
+   204→AGRUPAR
+   205→↓
+   206→COMPARAR
+   207→↓
+   208→BUSCAR CONFIRMACIÓN
+   209→↓
+   210→ANALIZAR
+   211→↓
+   212→PUNTUAR
+   213→↓
+   214→DETECTAR TENDENCIA / PROBLEMA / OPORTUNIDAD
+   215→↓
+   216→GENERAR REPORTE
+   217→↓
+   218→GUARDAR INTELIGENCIA
+   219→```
+   220→
+   221→El usuario NO debería tener que decirle:
+   222→
+   223→* qué API utilizar;
+   224→* qué herramienta llamar;
+   225→* cuántas búsquedas hacer;
+   226→* cómo cruzar las fuentes;
+   227→* cómo puntuar;
+   228→* cómo almacenar;
+   229→* cómo deduplicar.
+   230→
+   231→El usuario expresa el objetivo.
+   232→
+   233→CHISMOSO resuelve el proceso.
+   234→
+   235→---
+   236→
+   237→# 5. PERO AUTONOMÍA NO SIGNIFICA INVENTAR
+   238→
+   239→Regla crítica:
+   240→
+   241→> **Nunca presentar inferencias como hechos observados.**
+   242→
+   243→Separar estrictamente:
+   244→
+   245→### OBSERVED
+   246→
+   247→Lo que una fuente realmente muestra.
+   248→
+   249→### DERIVED
+   250→
+   251→Conclusión obtenida mediante procesamiento de evidencia.
+   252→
+   253→### INFERRED
+   254→
+   255→Hipótesis razonable.
+   256→
+   257→### PREDICTED
+   258→
+   259→Proyección futura.
+   260→
+   261→### UNKNOWN
+   262→
+   263→Información insuficiente.
+   264→
+   265→Cada resultado importante debe conservar esta distinción.
+   266→
+   267→---
+   268→
+   269→# 6. ADN DE EVIDENCIA
+   270→
+   271→Toda señal importante debe poder rastrearse.
+   272→
+   273→Modelo conceptual:
+   274→
+   275→```text
+   276→Signal
+   277→├── id
+   278→├── source
+   279→├── source_type
+   280→├── url/reference
+   281→├── observed_at
+   282→├── collected_at
+   283→├── geographic_scope
+   284→├── topic
+   285→├── raw_value
+   286→├── normalized_value
+   287→├── confidence
+   288→├── evidence_type
+   289→└── metadata
+   290→```
+   291→
+   292→La evidencia debe permitir responder:
+   293→
+   294→> "¿Por qué CHISMOSO cree esto?"
+   295→
+   296→Debe existir trazabilidad.
+   297→
+   298→Ejemplo:
+   299→
+   300→```text
+   301→OPORTUNIDAD
+   302→↓
+   303→basada en 4 señales
+   304→↓
+   305→Signal A → Google Trends
+   306→Signal B → Reddit
+   307→Signal C → YouTube
+   308→Signal D → Search/Web
+   309→```
+   310→
+   311→Si no existe evidencia suficiente:
+   312→
+   313→> "Evidencia insuficiente."
+   314→
+   315→No inventar.
+   316→
+   317→---
+   318→
+   319→# 7. LAS TRES SALIDAS PRINCIPALES
+   320→
+   321→CHISMOSO debe producir principalmente tres tipos de inteligencia.
+   322→
+   323→---
+   324→
+   325→## 7.1 TREND
+   326→
+   327→Una tendencia es:
+   328→
+   329→> un patrón observable de crecimiento, cambio o comportamiento repetido a lo largo del tiempo o entre múltiples fuentes.
+   330→
+   331→Ejemplo:
+   332→
+   333→```text
+   334→TREND
+   335→
+   336→Tema:
+   337→Automatización de reservas para restaurantes pequeños
+   338→
+   339→Estado:
+   340→Emergente
+   341→
+   342→Evidencia:
+   343→- crecimiento de búsquedas;
+   344→- aumento de conversaciones;
+   345→- incremento de contenido;
+   346→- aparición repetida del problema en comunidades.
+   347→
+   348→Confidence:
+   349→0.81
+   350→```
+   351→
+   352→---
+   353→
+   354→## 7.2 PROBLEM
+   355→
+   356→Problema emergente:
+   357→
+   358→> una necesidad, fricción, queja o dificultad que aparece repetidamente y puede estar aumentando.
+   359→
+   360→Ejemplo:
+   361→
+   362→```text
+   363→PROBLEM
+   364→
+   365→Problema:
+   366→Pequeños restaurantes pierden reservas gestionadas manualmente por WhatsApp.
+   367→
+   368→Evidence:
+   369→...
+   370→```
+   371→
+   372→---
+   373→
+   374→## 7.3 OPPORTUNITY
+   375→
+   376→Oportunidad:
+   377→
+   378→> una combinación de señal + problema + demanda potencial + posibilidad de intervención.
+   379→
+   380→Ejemplo:
+   381→
+   382→```text
+   383→OPPORTUNITY
+   384→
+   385→Problema:
+   386→Reservas manuales.
+   387→
+   388→Señal:
+   389→Crecimiento de demanda.
+   390→
+   391→Segmento:
+   392→Restaurantes pequeños.
+   393→
+   394→Posible solución:
+   395→Automatización de reservas y seguimiento por WhatsApp.
+   396→
+   397→Opportunity Score:
+   398→84/100
+   399→```
+   400→
+   401→---
+   402→
+   403→# 8. NO CONFUNDIR TREND CON OPPORTUNITY
+   404→
+   405→Regla importante.
+   406→
+   407→No todo trend es una oportunidad.
+   408→
+   409→No todo problema es una oportunidad.
+   410→
+   411→Ejemplo:
+   412→
+   413→```text
+   414→TREND:
+   415→La gente está buscando más "cafeterías pet friendly".
+   416→
+   417→```
+   418→
+   419→Eso NO significa automáticamente:
+   420→
+   421→```text
+   422→OPPORTUNITY:
+   423→Crear una cafetería pet friendly.
+   424→```
+   425→
+   426→Debe existir un razonamiento intermedio.
+   427→
+   428→CHISMOSO debe evaluar:
+   429→
+   430→```text
+   431→TREND
+   432→+
+   433→PROBLEM
+   434→+
+   435→DEMAND
+   436→+
+   437→TIMING
+   438→+
+   439→MARKET
+   440→+
+   441→FEASIBILITY
+   442→=
+   443→OPPORTUNITY
+   444→```
+   445→
+   446→---
+   447→
+   448→# 9. FUENTES
+   449→
+   450→Diseña CHISMOSO para trabajar con múltiples tipos de fuentes.
+   451→
+   452→No acoples el núcleo a una sola plataforma.
+   453→
+   454→Categorías iniciales:
+   455→
+   456→### SEARCH / WEB
+   457→
+   458→Para descubrir:
+   459→
+   460→* páginas;
+   461→* artículos;
+   462→* consultas;
+   463→* resultados;
+   464→* señales de interés.
+   465→
+   466→### GOOGLE TRENDS / SEARCH TRENDS
+   467→
+   468→Para:
+   469→
+   470→* crecimiento de búsquedas;
+   471→* comparación de términos;
+   472→* evolución temporal;
+   473→* estacionalidad.
+   474→
+   475→### REDDIT / COMMUNITIES
+   476→
+   477→Para:
+   478→
+   479→* problemas;
+   480→* conversaciones;
+   481→* preguntas repetidas;
+   482→* frustraciones;
+   483→* lenguaje real de usuarios.
+   484→
+   485→### YOUTUBE
+   486→
+   487→Para:
+   488→
+   489→* crecimiento de temas;
+   490→* contenido emergente;
+   491→* preguntas;
+   492→* títulos;
+   493→* frecuencia;
+   494→* engagement cuando sea observable.
+   495→
+   496→### SOCIAL MEDIA
+   497→
+   498→Cuando sea técnicamente accesible y permitido:
+   499→
+   500→* Instagram;
+   501→* X;
+   502→* TikTok;
+   503→* Facebook;
+   504→* otras fuentes relevantes.
+   505→
+   506→NO asumir que todas estarán disponibles.
+   507→
+   508→Cada fuente debe tener un provider independiente.
+   509→
+   510→---
+   511→
+   512→# 10. NO IMPLEMENTAR TODAS LAS FUENTES A LA VEZ
+   513→
+   514→Esta regla es crítica.
+   515→
+   516→No quiero 30 integraciones incompletas.
+   517→
+   518→Primero construir:
+   519→
+   520→```text
+   521→CORE
+   522→+
+   523→PROVIDER ABSTRACTION
+   524→+
+   525→2–3 FUENTES REALES
+   526→+
+   527→EVIDENCE ENGINE
+   528→+
+   529→SIGNAL ENGINE
+   530→+
+   531→TREND DETECTION
+   532→+
+   533→OPPORTUNITY ENGINE
+   534→+
+   535→MEMORY
+   536→+
+   537→REPORTING
+   538→```
+   539→
+   540→Después ampliar.
+   541→
+   542→Si una API requiere credenciales que no están disponibles:
+   543→
+   544→NO SIMULARLA.
+   545→
+   546→Marcarla como:
+   547→
+   548→```text
+   549→UNAVAILABLE
+   550→```
+   551→
+   552→y permitir que el sistema continúe con las fuentes disponibles.
+   553→
+   554→---
+   555→
+   556→# 11. PROVIDER ABSTRACTION
+   557→
+   558→Crear una arquitectura similar conceptualmente a:
+   559→
+   560→```text
+   561→Provider
+   562→├── canHandle()
+   563→├── health()
+   564→├── search()
+   565→├── collect()
+   566→├── normalize()
+   567→└── capabilities()
+   568→```
+   569→
+   570→Cada provider debe declarar:
+   571→
+   572→```text
+   573→name
+   574→type
+   575→capabilities
+   576→status
+   577→limits
+   578→authentication
+   579→```
+   580→
+   581→Ejemplo:
+   582→
+   583→```text
+   584→GoogleTrendsProvider
+   585→RedditProvider
+   586→WebSearchProvider
+   587→YouTubeProvider
+   588→```
+   589→
+   590→No permitir que el resto del sistema dependa directamente de APIs externas.
+   591→
+   592→---
+   593→
+   594→# 12. ERROR TAXONOMY
+   595→
+   596→Normalizar errores.
+   597→
+   598→Como mínimo:
+   599→
+   600→```text
+   601→OK
+   602→TEMPORARY_FAILURE
+   603→AUTH_FAILURE
+   604→RATE_LIMIT
+   605→EMPTY_RESULT
+   606→INVALID_INPUT
+   607→TIMEOUT
+   608→PROVIDER_UNAVAILABLE
+   609→PARSE_ERROR
+   610→QUOTA_EXCEEDED
+   611→```
+   612→
+   613→El comportamiento debe depender del tipo.
+   614→
+   615→Ejemplo:
+   616→
+   617→```text
+   618→RATE_LIMIT
+   619→→ esperar / retry controlado
+   620→
+   621→AUTH_FAILURE
+   622→→ no repetir inútilmente
+   623→
+   624→EMPTY_RESULT
+   625→→ intentar otra estrategia
+   626→
+   627→TIMEOUT
+   628→→ retry limitado
+   629→
+   630→PROVIDER_UNAVAILABLE
+   631→→ fallback
+   632→
+   633→PARSE_ERROR
+   634→→ registrar evidencia del fallo
+   635→```
+   636→
+   637→No utilizar:
+   638→
+   639→```text
+   640→retry everything
+   641→```
+   642→
+   643→---
+   644→
+   645→# 13. SIGNAL NORMALIZATION
+   646→
+   647→Todas las fuentes deben convertirse a un modelo común.
+   648→
+   649→Conceptualmente:
+   650→
+   651→```text
+   652→Raw Source
+   653→↓
+   654→Normalizer
+   655→↓
+   656→Signal
+   657→```
+   658→
+   659→Modelo conceptual:
+   660→
+   661→```text
+   662→Signal {
+   663→    id
+   664→    topic
+   665→    keyword
+   666→    source
+   667→    sourceType
+   668→    timestamp
+   669→    geography
+   670→    metric
+   671→    value
+   672→    normalizedValue
+   673→    direction
+   674→    velocity
+   675→    confidence
+   676→    evidence
+   677→}
+   678→```
+   679→
+   680→La implementación final puede modificar los campos si existe una razón técnica, pero debe conservar esta semántica.
+   681→
+   682→---
+   683→
+   684→# 14. SIGNAL TYPES
+   685→
+   686→Diseñar inicialmente categorías como:
+   687→
+   688→```text
+   689→SEARCH_SPIKE
+   690→MENTION_SPIKE
+   691→QUESTION_SPIKE
+   692→COMPLAINT_SPIKE
+   693→CONTENT_GROWTH
+   694→ENGAGEMENT_GROWTH
+   695→NEW_PRODUCT
+   696→NEW_BEHAVIOR
+   697→PRICE_CHANGE
+   698→DEMAND_SIGNAL
+   699→PROBLEM_SIGNAL
+   700→MARKET_SIGNAL
+   701→```
+   702→
+   703→No es necesario implementarlas todas inmediatamente.
+   704→
+   705→Pero el modelo debe poder crecer.
+   706→
+   707→---
+   708→
+   709→# 15. TREND DETECTION ENGINE
+   710→
+   711→Este es uno de los componentes centrales.
+   712→
+   713→Debe poder determinar si una señal constituye:
+   714→
+   715→```text
+   716→NOISE
+   717→WEAK_SIGNAL
+   718→EMERGING_TREND
+   719→STRONG_TREND
+   720→ESTABLISHED_TREND
+   721→DECLINING_TREND
+   722→```
+   723→
+   724→No depender exclusivamente de un LLM.
+   725→
+   726→Siempre que sea posible, usar métricas.
+   727→
+   728→Variables posibles:
+   729→
+   730→```text
+   731→growth
+   732→velocity
+   733→acceleration
+   734→frequency
+   735→persistence
+   736→cross_source_confirmation
+   737→geographic_spread
+   738→engagement
+   739→recency
+   740→seasonality
+   741→```
+   742→
+   743→Ejemplo conceptual:
+   744→
+   745→```text
+   746→Trend Score =
+   747→Growth
+   748→+ Persistence
+   749→+ Cross-source confirmation
+   750→+ Recency
+   751→+ Velocity
+   752→- Noise
+   753→```
+   754→
+   755→No inventes una fórmula arbitraria y la presentes como científica.
+   756→
+   757→Documenta claramente cualquier scoring heurístico.
+   758→
+   759→---
+   760→
+   761→# 16. CROSS-SOURCE CONFIRMATION
+   762→
+   763→Esta capacidad es fundamental.
+   764→
+   765→Una señal encontrada en una única fuente debe tener menor confianza.
+   766→
+   767→Ejemplo:
+   768→
+   769→```text
+   770→Google Trends
+   771→    ↓
+   772→signal
+   773→
+   774→Reddit
+   775→    ↓
+   776→signal
+   777→
+   778→YouTube
+   779→    ↓
+   780→signal
+   781→
+   782→Web
+   783→    ↓
+   784→signal
+   785→```
+   786→
+   787→Si las señales apuntan hacia el mismo fenómeno:
+   788→
+   789→```text
+   790→CROSS-SOURCE CONFIRMATION
+   791→```
+   792→
+   793→aumenta la confianza.
+   794→
+   795→Ejemplo:
+   796→
+   797→```text
+   798→1 fuente:
+   799→confidence = low
+   800→
+   801→2 fuentes independientes:
+   802→confidence = medium
+   803→
+   804→3+ fuentes independientes:
+   805→confidence = high
+   806→```
+   807→
+   808→La fórmula exacta puede evolucionar.
+   809→
+   810→No hardcodear falsas certezas.
+   811→
+   812→---
+   813→
+   814→# 17. TEMPORAL MEMORY
+   815→
+   816→CHISMOSO NO DEBE TENER MEMORIA únicamente conversacional.
+   817→
+   818→Debe recordar señales y su evolución.
+   819→
+   820→Necesitamos poder responder:
+   821→
+   822→> "¿Esto ya lo habíamos visto?"
+   823→
+   824→y:
+   825→
+   826→> "¿Está creciendo o desapareciendo?"
+   827→
+   828→Modelo conceptual:
+   829→
+   830→```text
+   831→Observation
+   832→↓
+   833→Signal
+   834→↓
+   835→Topic
+   836→↓
+   837→Historical observations
+   838→↓
+   839→Trend evolution
+   840→```
+   841→
+   842→La memoria debe permitir:
+   843→
+   844→```text
+   845→first_seen
+   846→last_seen
+   847→observation_count
+   848→sources_count
+   849→growth_history
+   850→status_history
+   851→```
+   852→
+   853→---
+   854→
+   855→# 18. TOPIC CLUSTERING
+   856→
+   857→Diferentes expresiones pueden representar el mismo fenómeno.
+   858→
+   859→Ejemplo:
+   860→
+   861→```text
+   862→"reservas por WhatsApp"
+   863→"agendar por WhatsApp"
+   864→"reservas restaurante WhatsApp"
+   865→"automatizar reservas WhatsApp"
+   866→```
+   867→
+   868→pueden pertenecer a:
+   869→
+   870→```text
+   871→TOPIC:
+   872→WhatsApp restaurant reservation automation
+   873→```
+   874→
+   875→Diseñar un mecanismo de agrupación.
+   876→
+   877→Puede usar:
+   878→
+   879→* normalización;
+   880→* keywords;
+   881→* embeddings si realmente aportan valor;
+   882→* LLM;
+   883→* reglas híbridas.
+   884→
+   885→No introducir infraestructura pesada sin necesidad.
+   886→
+   887→---
+   888→
+   889→# 19. PROBLEM DETECTION
+   890→
+   891→CHISMOSO debe poder detectar problemas a partir de señales como:
+   892→
+   893→```text
+   894→complaints
+   895→questions
+   896→repeated frustrations
+   897→manual work
+   898→high friction
+   899→negative sentiment
+   900→repeated requests
+   901→"how do I..."
+   902→"why doesn't..."
+   903→"does anyone know..."
+   904→```
+   905→
+   906→Pero:
+   907→
+   908→> sentimiento negativo ≠ automáticamente problema de negocio.
+   909→
+   910→Debe existir evidencia de repetición, relevancia o intensidad.
+   911→
+   912→---
+   913→
+   914→# 20. OPPORTUNITY ENGINE
+   915→
+   916→El Opportunity Engine convierte inteligencia en posibilidades accionables.
+   917→
+   918→Modelo conceptual:
+   919→
+   920→```text
+   921→Opportunity {
+   922→    id
+   923→    title
+   924→    problem
+   925→    target_segment
+   926→    geography
+   927→    evidence
+   928→    trend
+   929→    demand
+   930→    timing
+   931→    competition
+   932→    monetization
+   933→    feasibility
+   934→    score
+   935→    confidence
+   936→    created_at
+   937→}
+   938→```
+   939→
+   940→Debe responder:
+   941→
+   942→### Qué está ocurriendo?
+   943→
+   944→### A quién afecta?
+   945→
+   946→### Qué problema existe?
+   947→
+   948→### Qué evidencia tenemos?
+   949→
+   950→### Por qué puede ser importante?
+   951→
+   952→### Por qué ahora?
+   953→
+   954→### Qué se podría vender/crear?
+   955→
+   956→### Qué tan grande parece la oportunidad?
+   957→
+   958→### Qué tan incierta es?
+   959→
+   960→---
+   961→
+   962→# 21. OPPORTUNITY SCORING
+   963→
+   964→Crear un score transparente.
+   965→
+   966→Conceptualmente:
+   967→
+   968→```text
+   969→Opportunity Score
+   970→=
+   971→Demand
+   972→+
+   973→Growth
+   974→+
+   975→Problem Severity
+   976→+
+   977→Monetization Potential
+   978→+
+   979→Timing
+   980→+
+   981→Market Fit
+   982→-
+   983→Competition
+   984→-
+   985→Uncertainty
+   986→```
+   987→
+   988→No quiero un número mágico.
+   989→
+   990→El reporte debe explicar por qué recibió ese score.
+   991→
+   992→Ejemplo:
+   993→
+   994→```text
+   995→Opportunity Score: 82/100
+   996→
+   997→Demand: 86
+   998→Growth: 91
+   999→Problem Severity: 74
+  1000→Monetization: 83
+  1001→Timing: 89
+  1002→Competition: 51
+  1003→Uncertainty: 28
+  1004→```
+  1005→
+  1006→La escala y pesos deben quedar documentados.
+  1007→
+  1008→---
+  1009→
+  1010→# 22. CHISMOSO NO DEBE VENDER HUMO
+  1011→
+  1012→Regla de oro:
+  1013→
+  1014→Nunca producir:
+  1015→
+  1016→> "Esta oportunidad va a generar mucho dinero."
+  1017→
+  1018→Debe producir:
+  1019→
+  1020→> "La evidencia disponible sugiere una oportunidad potencial de X, con confianza Y y estas limitaciones."
+  1021→
+  1022→Separar:
+  1023→
+  1024→```text
+  1025→OBSERVATION
+  1026→ANALYSIS
+  1027→HYPOTHESIS
+  1028→OPPORTUNITY
+  1029→CONFIDENCE
+  1030→UNCERTAINTY
+  1031→```
+  1032→
+  1033→---
+  1034→
+  1035→# 23. RESEARCH PLANNER
+  1036→
+  1037→El agente debe poder decidir qué investigar.
+  1038→
+  1039→Ejemplo:
+  1040→
+  1041→Usuario:
+  1042→
+  1043→> "Busca oportunidades emergentes en automatización para pequeños negocios en Colombia."
+  1044→
+  1045→CHISMOSO podría decidir:
+  1046→
+  1047→```text
+  1048→1. Detectar temas de crecimiento.
+  1049→2. Buscar problemas repetidos.
+  1050→3. Analizar señales de demanda.
+  1051→4. Buscar confirmación en otras fuentes.
+  1052→5. Agrupar temas.
+  1053→6. Puntuar.
+  1054→7. generar oportunidades.
+  1055→```
+  1056→
+  1057→No obligar al usuario a especificar el procedimiento.
+  1058→
+  1059→---
+  1060→
+  1061→# 24. QUERY GENERATION
+  1062→
+  1063→El agente debe poder generar búsquedas adicionales.
+  1064→
+  1065→Ejemplo:
+  1066→
+  1067→```text
+  1068→tema:
+  1069→"reservas restaurantes WhatsApp"
+  1070→
+  1071→queries:
+  1072→"restaurant WhatsApp booking problems"
+  1073→"restaurantes reservas WhatsApp Colombia"
+  1074→"WhatsApp reservation restaurant complaints"
+  1075→"restaurant booking automation"
+  1076→```
+  1077→
+  1078→Debe poder ampliar/reformular búsquedas cuando la primera investigación sea débil.
+  1079→
+  1080→---
+  1081→
+  1082→# 25. INVESTIGATION LOOP
+  1083→
+  1084→Implementar un loop controlado:
+  1085→
+  1086→```text
+  1087→PLAN
+  1088→↓
+  1089→SEARCH
+  1090→↓
+  1091→EVALUATE
+  1092→↓
+  1093→DO WE HAVE ENOUGH EVIDENCE?
+  1094→├── YES → ANALYZE
+  1095→└── NO → EXPAND SEARCH
+  1096→```
+  1097→
+  1098→Con límites.
+  1099→
+  1100→No permitir loops infinitos.
+  1101→
+  1102→---
+  1103→
+  1104→# 26. AUTONOMY BUDGET
+  1105→
+  1106→Toda investigación debe tener límites:
+  1107→
+  1108→```text
+  1109→max_iterations
+  1110→max_queries
+  1111→max_sources
+  1112→max_results
+  1113→max_runtime
+  1114→max_provider_calls
+  1115→```
+  1116→
+  1117→El agente debe poder terminar con:
+  1118→
+  1119→```text
+  1120→INSUFFICIENT_EVIDENCE
+  1121→```
+  1122→
+  1123→en vez de seguir investigando indefinidamente.
+  1124→
+  1125→---
+  1126→
+  1127→# 27. REPORT ENGINE
+  1128→
+  1129→El resultado final debe ser inteligencia legible.
+  1130→
+  1131→No devolver una montaña de JSON.
+  1132→
+  1133→Ejemplo:
+  1134→
+  1135→```text
+  1136→# CHISMOSO INTELLIGENCE REPORT
+  1137→
+  1138→## Pregunta
+  1139→...
+  1140→
+  1141→## Resumen ejecutivo
+  1142→...
+  1143→
+  1144→## Tendencias detectadas
+  1145→
+  1146→1. ...
+  1147→   Confidence: 84%
+  1148→   Evidence: 4 sources
+  1149→
+  1150→2. ...
+  1151→
+  1152→## Problemas emergentes
+  1153→
+  1154→1. ...
+  1155→
+  1156→## Oportunidades
+  1157→
+  1158→### Opportunity #1
+  1159→...
+  1160→Score: 87/100
+  1161→
+  1162→Why now:
+  1163→...
+  1164→
+  1165→Evidence:
+  1166→...
+  1167→
+  1168→Uncertainty:
+  1169→...
+  1170→
+  1171→## Signals
+  1172→...
+  1173→
+  1174→## Sources
+  1175→...
+  1176→
+  1177→## Recommended next action
+  1178→...
+  1179→```
+  1180→
+  1181→---
+  1182→
+  1183→# 28. MACHINE-READABLE OUTPUT
+  1184→
+  1185→Aunque el reporte sea humano, debe existir un formato estructurado.
+  1186→
+  1187→Por ejemplo:
+  1188→
+  1189→```text
+  1190→IntelligenceReport
+  1191→├── query
+  1192→├── scope
+  1193→├── trends[]
+  1194→├── problems[]
+  1195→├── opportunities[]
+  1196→├── signals[]
+  1197→├── evidence[]
+  1198→├── confidence
+  1199→├── limitations
+  1200→└── generated_at
+  1201→```
+  1202→
+  1203→Esto permitirá que otros agentes consuman la información.
+  1204→
+  1205→---
+  1206→
+  1207→# 29. INTEROPERABILIDAD
+  1208→
+  1209→Diseñar desde el principio para que CHISMOSO pueda producir:
+  1210→
+  1211→```text
+  1212→Opportunity
+  1213→```
+  1214→
+  1215→que otro agente pueda consumir.
+  1216→
+  1217→Ejemplo:
+  1218→
+  1219→```text
+  1220→CHISMOSO
+  1221→↓
+  1222→Opportunity
+  1223→↓
+  1224→AGENTE-LEADS
+  1225→↓
+  1226→buscar empresas afectadas
+  1227→↓
+  1228→Lead Intelligence
+  1229→↓
+  1230→CRM-ALBRA
+  1231→```
+  1232→
+  1233→CHISMOSO NO debe hacer la búsqueda masiva de leads.
+  1234→
+  1235→Debe entregar inteligencia estructurada.
+  1236→
+  1237→---
+  1238→
+  1239→# 30. EVENTUAL CONTRATO ENTRE AGENTES
+  1240→
+  1241→Diseñar conceptualmente un contrato:
+  1242→
+  1243→```text
+  1244→Opportunity {
+  1245→    id
+  1246→    title
+  1247→    description
+  1248→    problem
+  1249→    segment
+  1250→    geography
+  1251→    evidence
+  1252→    trend
+  1253→    confidence
+  1254→    score
+  1255→    suggested_next_agent
+  1256→}
+  1257→```
+  1258→
+  1259→Ejemplo:
+  1260→
+  1261→```text
+  1262→suggested_next_agent:
+  1263→"AGENTE-LEADS"
+  1264→```
+  1265→
+  1266→No implementar todavía un sistema distribuido complejo.
+  1267→
+  1268→Primero establecer el contrato.
+  1269→
+  1270→---
+  1271→
+  1272→# 31. STORAGE
+  1273→
+  1274→SQLite es suficiente para V1 si ya existe infraestructura reutilizable.
+  1275→
+  1276→No introducir PostgreSQL, Redis, Kafka, vector DB, Elasticsearch, etc. solo porque "podrían ser útiles".
+  1277→
+  1278→Primero demostrar valor.
+  1279→
+  1280→Tablas conceptuales:
+  1281→
+  1282→```text
+  1283→topics
+  1284→signals
+  1285→evidence
+  1286→trend_observations
+  1287→trends
+  1288→problems
+  1289→opportunities
+  1290→investigations
+  1291→sources
+  1292→provider_runs
+  1293→```
+  1294→
+  1295→Puede simplificarse si una estructura inicial más pequeña cubre el problema correctamente.
+  1296→
+  1297→---
+  1298→
+  1299→# 32. OBSERVABILITY
+  1300→
+  1301→Cada investigación debe registrar:
+  1302→
+  1303→```text
+  1304→investigation_id
+  1305→started_at
+  1306→completed_at
+  1307→query
+  1308→providers_used
+  1309→queries_executed
+  1310→signals_found
+  1311→evidence_found
+  1312→trends_found
+  1313→opportunities_found
+  1314→errors
+  1315→duration
+  1316→status
+  1317→```
+  1318→
+  1319→Estados:
+  1320→
+  1321→```text
+  1322→RUNNING
+  1323→COMPLETED
+  1324→PARTIAL
+  1325→FAILED
+  1326→INSUFFICIENT_EVIDENCE
+  1327→```
+  1328→
+  1329→---
+  1330→
+  1331→# 33. PROVIDER HEALTH
+  1332→
+  1333→Cada provider debe poder reportar:
+  1334→
+  1335→```text
+  1336→OK
+  1337→DEGRADED
+  1338→UNAVAILABLE
+  1339→AUTH_REQUIRED
+  1340→RATE_LIMITED
+  1341→```
+  1342→
+  1343→CHISMOSO debe continuar con otras fuentes cuando sea posible.
+  1344→
+  1345→---
+  1346→
+  1347→# 34. FALLBACK
+  1348→
+  1349→Ejemplo:
+  1350→
+  1351→```text
+  1352→Provider A
+  1353→↓
+  1354→RATE_LIMIT
+  1355→↓
+  1356→Provider B
+  1357→↓
+  1358→OK
+  1359→```
+  1360→
+  1361→El reporte debe registrar que ocurrió.
+  1362→
+  1363→Nunca ocultar fallos importantes.
+  1364→
+  1365→---
+  1366→
+  1367→# 35. SECURITY
+  1368→
+  1369→No almacenar:
+  1370→
+  1371→* API keys;
+  1372→* tokens;
+  1373→* passwords;
+  1374→* credentials
+  1375→
+  1376→en código.
+  1377→
+  1378→Usar `.env` / secrets.
+  1379→
+  1380→Nunca imprimir credenciales en logs.
+  1381→
+  1382→Sanitizar errores.
+  1383→
+  1384→---
+  1385→
+  1386→# 36. ANTI-HALLUCINATION
+  1387→
+  1388→Toda salida generada por LLM que contenga afirmaciones importantes debe estar vinculada a evidencia.
+  1389→
+  1390→No permitir frases como:
+  1391→
+  1392→> "El mercado está creciendo rápidamente"
+  1393→
+  1394→sin evidencia.
+  1395→
+  1396→Preferir:
+  1397→
+  1398→> "Se observaron señales de crecimiento en X fuentes durante Y período."
+  1399→
+  1400→---
+  1401→
+  1402→# 37. NO INVENTAR DATOS
+  1403→
+  1404→Está estrictamente prohibido:
+  1405→
+  1406→* inventar métricas;
+  1407→* inventar búsquedas;
+  1408→* inventar resultados;
+  1409→* inventar URLs;
+  1410→* inventar engagement;
+  1411→* inventar crecimiento;
+  1412→* inventar fuentes;
+  1413→* simular respuestas de APIs;
+  1414→* devolver "datos de ejemplo" como si fueran reales.
+  1415→
+  1416→Si una integración no está disponible:
+  1417→
+  1418→```text
+  1419→UNAVAILABLE
+  1420→```
+  1421→
+  1422→Si una métrica no existe:
+  1423→
+  1424→```text
+  1425→UNKNOWN
+  1426→```
+  1427→
+  1428→---
+  1429→
+  1430→# 38. TESTING
+  1431→
+  1432→No considerar terminado el agente solo porque compila.
+  1433→
+  1434→Necesitamos pruebas:
+  1435→
+  1436→### UNIT
+  1437→
+  1438→* normalización;
+  1439→* scoring;
+  1440→* dedup;
+  1441→* trend detection;
+  1442→* topic clustering;
+  1443→* error taxonomy.
+  1444→
+  1445→### PROVIDER
+  1446→
+  1447→Mock/integration tests cuando corresponda.
+  1448→
+  1449→### PIPELINE
+  1450→
+  1451→```text
+  1452→query
+  1453→→ collect
+  1454→→ normalize
+  1455→→ analyze
+  1456→→ score
+  1457→→ report
+  1458→```
+  1459→
+  1460→### E2E
+  1461→
+  1462→Ejemplo:
+  1463→
+  1464→> "Detecta oportunidades emergentes relacionadas con automatización para pequeños restaurantes en Colombia."
+  1465→
+  1466→Debe producir:
+  1467→
+  1468→```text
+  1469→investigation
+  1470→signals
+  1471→evidence
+  1472→trend/problem
+  1473→opportunity
+  1474→report
+  1475→```
+  1476→
+  1477→y demostrar que cada afirmación importante tiene trazabilidad.
+  1478→
+  1479→---
+  1480→
+  1481→# 39. TEST DE REALIDAD
+  1482→
+  1483→Crear una prueba específica para evitar capacidades falsas.
+  1484→
+  1485→Si un provider no está configurado:
+  1486→
+  1487→```text
+  1488→provider status = unavailable
+  1489→```
+  1490→
+  1491→No:
+  1492→
+  1493→```text
+  1494→fake successful response
+  1495→```
+  1496→
+  1497→Si no hay suficiente evidencia:
+  1498→
+  1499→```text
+  1500→confidence low
+  1501→status insufficient evidence
+  1502→```
+  1503→
+  1504→No:
+  1505→
+  1506→```text
+  1507→invented trend
+  1508→```
+  1509→
+  1510→---
+  1511→
+  1512→# 40. INTERFAZ
+  1513→
+  1514→La interfaz inicial puede ser Telegram/CLI/API según la infraestructura disponible.
+  1515→
+  1516→Pero:
+  1517→
+  1518→> La interfaz NO es el cerebro.
+  1519→
+  1520→Separar:
+  1521→
+  1522→```text
+  1523→INTERFACE
+  1524→↓
+  1525→ORCHESTRATOR
+  1526→↓
+  1527→CAPABILITIES
+  1528→```
+  1529→
+  1530→Telegram puede cambiarse posteriormente por:
+  1531→
+  1532→* Web;
+  1533→* API;
+  1534→* Dashboard;
+  1535→* CRM;
+  1536→* otro agente.
+  1537→
+  1538→---
+  1539→
+  1540→# 41. LLM
+  1541→
+  1542→Puedes reutilizar el patrón que hemos usado en otros agentes:
+  1543→
+  1544→```text
+  1545→LLM
+  1546→↓
+  1547→Agent Loop
+  1548→↓
+  1549→Tool Registry
+  1550→↓
+  1551→Tools
+  1552→```
+  1553→
+  1554→Pero no copies ciegamente otro agente.
+  1555→
+  1556→Adapta el patrón al problema de inteligencia.
+  1557→
+  1558→El LLM debe ser responsable principalmente de:
+  1559→
+  1560→* interpretar intención;
+  1561→* generar hipótesis;
+  1562→* planificar investigación;
+  1563→* seleccionar herramientas;
+  1564→* interpretar resultados;
+  1565→* sintetizar;
+  1566→* explicar incertidumbre.
+  1567→
+  1568→No debe encargarse directamente de:
+  1569→
+  1570→* scraping;
+  1571→* persistencia;
+  1572→* dedup;
+  1573→* retries;
+  1574→* provider authentication;
+  1575→* scoring determinista;
+  1576→* almacenamiento.
+  1577→
+  1578→---
+  1579→
+  1580→# 42. TOOL REGISTRY
+  1581→
+  1582→Las herramientas deben ser especializadas.
+  1583→
+  1584→Conceptualmente:
+  1585→
+  1586→```text
+  1587→search_web
+  1588→collect_trends
+  1589→collect_social_signals
+  1590→search_community
+  1591→search_youtube
+  1592→get_topic_history
+  1593→analyze_signals
+  1594→detect_trends
+  1595→detect_problems
+  1596→generate_opportunities
+  1597→get_evidence
+  1598→save_intelligence
+  1599→generate_report
+  1600→```
+  1601→
+  1602→No crear todas obligatoriamente ahora.
+  1603→
+  1604→Construir las mínimas necesarias para V1.
+  1605→
+  1606→---
+  1607→
+  1608→# 43. NO SOBRECARGAR EL AGENTE
+  1609→
+  1610→NO agregar ahora:
+  1611→
+  1612→* generación de contenido;
+  1613→* publicación automática;
+  1614→* campañas;
+  1615→* email marketing;
+  1616→* CRM completo;
+  1617→* scraping masivo de leads;
+  1618→* trading;
+  1619→* procurement;
+  1620→* YouTube automation;
+  1621→* gestión financiera;
+  1622→* agentes de ventas;
+  1623→* customer support;
+  1624→* WhatsApp automation.
+  1625→
+  1626→Eso pertenece a otros sistemas.
+  1627→
+  1628→---
+  1629→
+  1630→# 44. CHISMOSO VS AGENTE-LEADS
+  1631→
+  1632→Mantener esta frontera:
+  1633→
+  1634→```text
+  1635→CHISMOSO
+  1636→
+  1637→¿Qué está pasando?
+  1638→¿Por qué podría importar?
+  1639→¿Está creciendo?
+  1640→¿Hay un problema?
+  1641→¿Hay una oportunidad?
+  1642→```
+  1643→
+  1644→vs.
+  1645→
+  1646→```text
+  1647→AGENTE-LEADS
+  1648→
+  1649→¿Quién está afectado?
+  1650→¿Quién podría comprar?
+  1651→¿Dónde está?
+  1652→¿Cómo contacto?
+  1653→¿Qué tan buen prospecto es?
+  1654→```
+  1655→
+  1656→Ejemplo:
+  1657→
+  1658→CHISMOSO descubre:
+  1659→
+  1660→> "Los restaurantes pequeños están mostrando creciente interés por automatizar reservas vía WhatsApp."
+  1661→
+  1662→AGENTE-LEADS recibe:
+  1663→
+  1664→```text
+  1665→Opportunity
+  1666→```
+  1667→
+  1668→y ejecuta:
+  1669→
+  1670→> "Encuentra restaurantes pequeños en Medellín que tengan esta necesidad."
+  1671→
+  1672→No mezclar las responsabilidades.
+  1673→
+  1674→---
+  1675→
+  1676→# 45. CHISMOSO VS NEX-SCOPE
+  1677→
+  1678→NEX-SCOPE puede especializarse en:
+  1679→
+  1680→```text
+  1681→YouTube intelligence
+  1682→```
+  1683→
+  1684→CHISMOSO puede utilizar YouTube como una fuente adicional.
+  1685→
+  1686→Pero CHISMOSO no debe absorber todas las funciones de NEX-SCOPE.
+  1687→
+  1688→---
+  1689→
+  1690→# 46. CHISMOSO VS RADAR-SECOP2
+  1691→
+  1692→RADAR-SECOP2:
+  1693→
+  1694→```text
+  1695→contratación pública
+  1696→licitaciones
+  1697→entidades
+  1698→procesos
+  1699→```
+  1700→
+  1701→CHISMOSO:
+  1702→
+  1703→```text
+  1704→señales generales
+  1705→tendencias
+  1706→problemas
+  1707→oportunidades
+  1708→```
+  1709→
+  1710→Puede eventualmente consumir información proveniente de otros agentes, pero no reemplazarlos.
+  1711→
+  1712→---
+  1713→
+  1714→# 47. ARQUITECTURA OBJETIVO
+  1715→
+  1716→Construir una arquitectura conceptual cercana a:
+  1717→
+  1718→```text
+  1719→                    USER
+  1720→                     ↓
+  1721→               INTERFACE
+  1722→                     ↓
+  1723→               ORCHESTRATOR
+  1724→                     ↓
+  1725→              RESEARCH PLANNER
+  1726→                     ↓
+  1727→          ┌──────────┴──────────┐
+  1728→          ↓                     ↓
+  1729→     PROVIDERS              MEMORY
+  1730→          ↓                     ↓
+  1731→     COLLECTORS             HISTORY
+  1732→          ↓
+  1733→     NORMALIZERS
+  1734→          ↓
+  1735→        SIGNALS
+  1736→          ↓
+  1737→    ┌─────┴──────┐
+  1738→    ↓            ↓
+  1739→TREND ENGINE   PROBLEM ENGINE
+  1740→    ↓            ↓
+  1741→    └─────┬──────┘
+  1742→          ↓
+  1743→  OPPORTUNITY ENGINE
+  1744→          ↓
+  1745→       SCORING
+  1746→          ↓
+  1747→       EVIDENCE
+  1748→          ↓
+  1749→       REPORTING
+  1750→          ↓
+  1751→   MACHINE OUTPUT
+  1752→          ↓
+  1753→ OTHER AGENTS / CRM
+  1754→```
+  1755→
+  1756→---
+  1757→
+  1758→# 48. CARPETA OBJETIVO
+  1759→
+  1760→No crear esta estructura ciegamente.
+  1761→
+  1762→Adapta la arquitectura al repo real.
+  1763→
+  1764→Pero conceptualmente:
+  1765→
+  1766→```text
+  1767→src/
+  1768→  agent/
+  1769→    orchestrator/
+  1770→    planning/
+  1771→    tools/
+  1772→
+  1773→  intelligence/
+  1774→    signals/
+  1775→    trends/
+  1776→    problems/
+  1777→    opportunities/
+  1778→    scoring/
+  1779→    clustering/
+  1780→
+  1781→  providers/
+  1782→    search/
+  1783→    trends/
+  1784→    communities/
+  1785→    youtube/
+  1786→    social/
+  1787→
+  1788→  evidence/
+  1789→    models/
+  1790→    storage/
+  1791→    validation/
+  1792→
+  1793→  database/
+  1794→    migrations/
+  1795→    repositories/
+  1796→
+  1797→  reports/
+  1798→
+  1799→  integrations/
+  1800→
+  1801→  interfaces/
+  1802→
+  1803→  config/
+  1804→
+  1805→  index.ts
+  1806→```
+  1807→
+  1808→No conviertas esto en una obligación de crear 40 archivos.
+  1809→
+  1810→La arquitectura debe emerger de las necesidades reales.
+  1811→
+  1812→---
+  1813→
+  1814→# 49. FASES DE CONSTRUCCIÓN
+  1815→
+  1816→## FASE 0 — AUDITORÍA
+  1817→
+  1818→Antes de escribir código:
+  1819→
+  1820→Inspecciona completamente el repo/entorno disponible.
+  1821→
+  1822→Entrega:
+  1823→
+  1824→```text
+  1825→CURRENT STATE
+  1826→ARCHITECTURE
+  1827→EXISTING COMPONENTS
+  1828→REUSABLE COMPONENTS
+  1829→TECHNICAL DEBT
+  1830→MISSING CAPABILITIES
+  1831→RISKS
+  1832→PROPOSED V1 ARCHITECTURE
+  1833→FILES TO CREATE
+  1834→FILES TO MODIFY
+  1835→FILES TO PRESERVE
+  1836→```
+  1837→
+  1838→NO IMPLEMENTES TODAVÍA.
+  1839→
+  1840→Primero entiende.
+  1841→
+  1842→---
+  1843→
+  1844→# 50. FASE 1 — FOUNDATION
+  1845→
+  1846→Construir:
+  1847→
+  1848→```text
+  1849→Canonical models
+  1850→Provider abstraction
+  1851→Error taxonomy
+  1852→Evidence model
+  1853→SQLite foundation
+  1854→Observability
+  1855→```
+  1856→
+  1857→Validar.
+  1858→
+  1859→---
+  1860→
+  1861→# 51. FASE 2 — COLLECTION
+  1862→
+  1863→Construir 2–3 fuentes reales.
+  1864→
+  1865→Priorizar fuentes con:
+  1866→
+  1867→* buena disponibilidad;
+  1868→* utilidad;
+  1869→* bajo acoplamiento;
+  1870→* facilidad de prueba;
+  1871→* coste razonable.
+  1872→
+  1873→No implementar una fuente solo porque "sería cool".
+  1874→
+  1875→---
+  1876→
+  1877→# 52. FASE 3 — SIGNAL ENGINE
+  1878→
+  1879→Implementar:
+  1880→
+  1881→```text
+  1882→normalization
+  1883→dedup
+  1884→topic grouping
+  1885→signal classification
+  1886→```
+  1887→
+  1888→---
+  1889→
+  1890→# 53. FASE 4 — INTELLIGENCE
+  1891→
+  1892→Implementar:
+  1893→
+  1894→```text
+  1895→trend detection
+  1896→problem detection
+  1897→cross-source confirmation
+  1898→confidence
+  1899→historical evolution
+  1900→```
+  1901→
+  1902→---
+  1903→
+  1904→# 54. FASE 5 — OPPORTUNITY ENGINE
+  1905→
+  1906→Implementar:
+  1907→
+  1908→```text
+  1909→opportunity extraction
+  1910→scoring
+  1911→ranking
+  1912→evidence linkage
+  1913→uncertainty
+  1914→```
+  1915→
+  1916→---
+  1917→
+  1918→# 55. FASE 6 — ORCHESTRATOR
+  1919→
+  1920→Conectar:
+  1921→
+  1922→```text
+  1923→USER
+  1924→↓
+  1925→PLAN
+  1926→↓
+  1927→COLLECT
+  1928→↓
+  1929→ANALYZE
+  1930→↓
+  1931→VALIDATE
+  1932→↓
+  1933→SCORE
+  1934→↓
+  1935→REPORT
+  1936→```
+  1937→
+  1938→---
+  1939→
+  1940→# 56. FASE 7 — INTEROPERABILITY
+  1941→
+  1942→Definir el contrato:
+  1943→
+  1944→```text
+  1945→Opportunity → AGENTE-LEADS
+  1946→```
+  1947→
+  1948→Sin construir todavía un sistema distribuido complejo.
+  1949→
+  1950→---
+  1951→
+  1952→# 57. CRITERIOS DE TERMINACIÓN
+  1953→
+  1954→NO consideres el proyecto terminado porque:
+  1955→
+  1956→```text
+  1957→npm install
+  1958→npm run build
+  1959→```
+  1960→
+  1961→funcionan.
+  1962→
+  1963→Debe cumplirse:
+  1964→
+  1965→### Architecture
+  1966→
+  1967→* separación clara de responsabilidades;
+  1968→* providers desacoplados;
+  1969→* inteligencia separada de acceso a datos;
+  1970→* interfaz separada del core.
+  1971→
+  1972→### Truthfulness
+  1973→
+  1974→* ninguna capacidad falsa;
+  1975→* ningún dato inventado;
+  1976→* ningún provider simulado presentado como real.
+  1977→
+  1978→### Evidence
+  1979→
+  1980→* señales trazables;
+  1981→* tendencias respaldadas;
+  1982→* oportunidades con evidencia.
+  1983→
+  1984→### Memory
+  1985→
+  1986→* persistencia funcional;
+  1987→* historial;
+  1988→* evolución.
+  1989→
+  1990→### Intelligence
+  1991→
+  1992→* detección de señales;
+  1993→* tendencias;
+  1994→* problemas;
+  1995→* oportunidades.
+  1996→
+  1997→### Autonomy
+  1998→
+  1999→* una investigación completa puede ejecutarse con una instrucción de alto nivel.
+  2000→
+
+[showing lines 1-2000 of 2261; use offset=2001 with limit to continue reading]
