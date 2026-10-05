@@ -260,8 +260,8 @@ export class ChismosoDB {
 // an exit handler that closes any pending DB handles gracefully.
 const openDbs = new Set<ChismosoDB>();
 process.on('beforeExit', () => {
-  for (const db of openDbs) {
-    try { db.db.close(); } catch { /* ignore */ }
+  for (const dbInstance of openDbs) {
+    try { dbInstance.close(); } catch { /* ignore */ }
   }
   openDbs.clear();
 });

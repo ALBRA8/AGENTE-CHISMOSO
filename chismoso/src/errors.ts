@@ -136,7 +136,7 @@ export function classifyError(err: unknown, providerName?: string): ChismosoErro
       cause: err,
     });
   }
-  if (msg.includes('empty') || msg.includes('no result') || msg.includes('not found')) {
+  if (msg.includes('empty') || msg.includes('no result') || msg.includes('not found') || msg.includes('no search results')) {
     return new ChismosoErrorImpl({
       code: ErrorCode.EMPTY_RESULT,
       message: err instanceof Error ? err.message : String(err),

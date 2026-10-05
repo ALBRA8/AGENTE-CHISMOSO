@@ -318,20 +318,12 @@ export class Orchestrator {
       // durante el loop, así que el array in-memory está vacío).
       investigation.providerRuns = this.cfg.repositories.investigations.listProviderRuns(investigationId);
 
-      const report = buildReport({
-        investigation,
-        signals,
-        evidence,
-        trends,
-        problems,
-        opportunities,
-      });
-
+      // Setear counts y status ANTES de buildReport para que el executiveSummary
+      // muestre el estado final correcto (no RUNNING).
       investigation.trendsFound = trends.length;
       investigation.problemsFound = problems.length;
       investigation.opportunitiesFound = opportunities.length;
 
-      // Determine status
       if (signals.length === 0) {
         investigation.status = InvestigationStatus.INSUFFICIENT_EVIDENCE;
       } else if (investigation.errors.length > 0 && opportunities.length === 0) {
@@ -341,6 +333,15 @@ export class Orchestrator {
       }
       investigation.completedAt = nowISO();
       investigation.durationMs = Date.now() - new Date(startedAt).getTime();
+
+      const report = buildReport({
+        investigation,
+        signals,
+        evidence,
+        trends,
+        problems,
+        opportunities,
+      });
 
       this.cfg.repositories.investigations.insert(investigation);
 
