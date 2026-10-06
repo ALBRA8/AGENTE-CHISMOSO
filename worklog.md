@@ -754,3 +754,103 @@ Stage Summary:
   - GET /api/chat/poll?sessionId=sess_xxx: retorna {newAnomalies, totalActive, seenCount, throttled?}. Rate 15/min/IP. Min 30s entre polls por sesión.
 - SSE events emitted: session (sessionId), tool_call (name,args,iteration), tool_result (name,summary,ok,iteration,durationMs), token (text chunk), done (sessionId,toolCalls,durationMs,error?,exhausted?), error (message,iteration?)
 - Session: in-memory per-IP, rolling 30-msg window, cleanup cada 10min sesiones >1h, lastSeenAnomalyIds compartido entre tool list_anomalies y /api/chat/poll para evitar doble-notificación.
+
+---
+Task ID: MCP-1
+Agent: mcp-server
+Task: Implement MCP server exposing CHISMOSO capabilities (tools, resources, prompts)
+
+Work Log:
+- Read worklog.md (first 80 lines) + existing orchestrator/tools.ts (ToolRegistry), cli.ts (existing command structure), repositories.ts, models.ts, db.ts, intelligence/semantic-search.ts, anomaly/index.ts, providers/base.ts, mesh/mcp-config.ts to understand the existing CHISMOSO V1.0 stack and the V1.3 outbound MCP client layer (registry.ts, bridge.ts, client.ts).
+- Verified `@modelcontextprotocol/sdk@1.32.1` already declared in chismoso/package.json dependencies. Ran `npm install --no-audit --no-fund` to ensure full install.
+- Confirmed SDK exports via package.json exports map: server/index.js (Server class), server/stdio.js (StdioServerTransport), types.js (ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ListResourceTemplatesRequestSchema, ReadResourceRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema).
+- Created `/home/z/my-project/chismoso/src/mcp/tools.ts` — 8 MCP tool descriptors with JSON Schema input. Each wraps existing CHISMOSO capabilities (Orchestrator, semanticSearch, AnomalyDetector, Repositories, ProviderRegistry). Tools: chismoso_investigate, chismoso_semantic_search, chismoso_list_investigations, chismoso_get_investigation, chismoso_list_anomalies, chismoso_list_topics, chismoso_get_topic_history, chismoso_list_providers. Exported shared `ChismosoMCPServerDeps` interface consumed by all handlers.
+- Created `/home/z/my-project/chismoso/src/mcp/resources.ts` — 6 resources: chismoso://investigations/latest, chismoso://investigations/{id} (exposed as resource template), chismoso://topics, chismoso://anomalies/active, chismoso://providers, chismoso://opportunities/top. Each has a `read(uri)` dispatcher returning JSON. Static list exposed via `resources`, templated one via `resourceTemplates` per MCP spec.
+- Created `/home/z/my-project/chismoso/src/mcp/prompts.ts` — 3 prompt templates with arguments: investigate_topic (topic, geography?), compare_topics (topicA, topicB), deep_dive_opportunity (investigationId, opportunityIndex?). Each renders a user-role message instructing the LLM which chismoso_* tools to call and how to format the output.
+- Created `/home/z/my-project/chismoso/src/mcp/server.ts` — `createChismosoMCPServer(deps)` factory wiring 6 request handlers (ListTools, CallTool, ListResources, ListResourceTemplates, ReadResource, ListPrompts, GetPrompt). CallTool errors are returned with `isError:true` (not thrown) so the LLM can react. Exported `startStdioServer(deps)` which connects to StdioServerTransport and blocks until stdin closes. Added `redirectConsoleToStderr()` helper that swaps `console.log/info/warn` to write to STDERR — critical because the MCP stdio protocol reserves STDOUT for JSON-RPC messages only.
+- Created `/home/z/my-project/chismoso/src/mcp/index.ts` — barrel re-exporting inbound (server/tools/resources/prompts) and outbound (client/registry/bridge) modules.
+- Modified `/home/z/my-project/chismoso/src/cli.ts` — added `mcp` command branch dispatching to new `runMCPCommand(args, cfg)`. Implemented `chismoso mcp serve [--transport=stdio] [--inspect]` subcommand. `--inspect` prints the registered tools/resources/prompts to stderr before serving. The serve path calls `redirectConsoleToStderr()` BEFORE constructing ChismosoDB so no logger line ever pollutes stdout. Also added the previously-missing `autoConnectMCP(toolRegistry)` helper (used by investigate/investigate-react/watch commands) — pre-existing TS2304 errors are now resolved.
+- Updated `printHelp()` to document the new `mcp` subcommand and added `printMCPHelp()` for `chismoso mcp help`.
+- Verified `npx tsc --noEmit` in chismoso/ passes (0 errors). Verified `bun run lint` at /home/z/my-project passes (EXIT=0).
+- Pre-compiled: `cd /home/z/my-project/chismoso && npx tsc` → dist/ built successfully (mcp/{server,tools,resources,prompts,index}.js + .d.ts).
+- End-to-end stdio verification:
+  1. Task-spec canonical test: `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | node dist/cli.js mcp serve` returns clean JSON-RPC listing exactly 8 tools with correct names. PASS.
+  2. Full MCP handshake (initialize → notifications/initialized → tools/list → resources/list → resources/templates/list → prompts/list → 3× tools/call) returns 8 tools, 5 static resources, 1 resource template (chismoso://investigations/{id}), 3 prompts with correct arg signatures. All tool calls succeed and return JSON.
+  3. resources/read tested against all 5 static URIs + 1 templated URI (chismoso://investigations/{existing_id} returns found:true with investigation data; chismoso://investigations/nonexistent returns found:false cleanly).
+  4. prompts/get tested with investigate_topic prompt — renders proper user-role message.
+  5. tools/call with unknown tool name returns `isError:true` + lists available tools (graceful error handling).
+- All CHISMOSO logger output now goes to stderr (verified — stdout contains ONLY JSON-RPC messages). Existing CLI commands (providers, help) unaffected.
+
+Stage Summary:
+- Files: src/mcp/{tools.ts, resources.ts, prompts.ts, server.ts, index.ts} (NEW, 5 files); src/cli.ts (MODIFIED — added `mcp` branch + autoConnectMCP helper + redirectConsoleToStderr call). package.json unchanged (SDK was already declared by an earlier task).
+- Tools: 8 (chismoso_investigate, chismoso_semantic_search, chismoso_list_investigations, chismoso_get_investigation, chismoso_list_anomalies, chismoso_list_topics, chismoso_get_topic_history, chismoso_list_providers)
+- Resources: 6 (5 static + 1 template: chismoso://investigations/{id})
+- Prompts: 3 (investigate_topic, compare_topics, deep_dive_opportunity)
+- Stdio verified: yes — full MCP handshake works, tool set matches spec exactly, no stdout pollution
+
+---
+Task ID: MCP-2
+Agent: mcp-client
+Task: Implement MCP client + registry + bridge to ToolRegistry
+
+Work Log:
+- Read worklog.md (MCP-1 entry, first 100 lines), chismoso/src/mesh/, chismoso/src/orchestrator/tools.ts, chismoso/src/cli.ts, chismoso/src/mcp/index.ts to understand the existing CHISMOSO V1.0 stack and the V1.3 inbound MCP server layer (server.ts/tools.ts/resources.ts/prompts.ts — all owned by MCP-1).
+- Confirmed that the four NEW files for MCP-2 (mesh/mcp-config.ts, mcp/client.ts, mcp/registry.ts, mcp/bridge.ts) were already present and well-documented from an earlier in-flight attempt. Reviewed each in full — they correctly:
+  - mcp-config.ts: Claude Desktop-style schema (command, args, env, transport, url, enabled); path resolution honors $CHISMOSO_MCP_CONFIG; writeDefaultConfig/loadMCPConfig/saveMCPConfig + addServer/removeServer mutators.
+  - client.ts: Client wrapper around @modelcontextprotocol/sdk v1.32.1 — StdioClientTransport for stdio, SSEClientTransport for /sse URLs, StreamableHTTPClientTransport for plain HTTP; eager listTools + listResources after connect (non-fatal on failure); connectToMCPServer / callMCPTool / readMCPResource / disconnectMCPServer exports.
+  - registry.ts: singleton mcpRegistry with connectAll / connect / disconnect / listConnected / getServer / getAllTools / callTool (dotted `<server>.<tool>` lookup) / disconnectAll; connectAll skips servers with enabled=false; connect persists enabled=true, disconnect persists enabled=false.
+  - bridge.ts: getMCPToolDefinitions flattens dotted names to `<server>_<tool>` (CLI-safe, dots replaced with underscores); descriptions prefixed `[MCP:<server>]`; execute delegates to mcpRegistry.callTool and joins text content blocks into a single string for the orchestrator's LLM context. registerMCPTools(toolRegistry) returns the count.
+  - mcp/index.ts barrel already re-exports both inbound (server.ts/tools.ts/…) and outbound (client/registry/bridge) modules.
+- Confirmed cli.ts had the `autoConnectMCP(toolRegistry)` helper (from MCP-1) wired into investigate/investigate-react/watch with --no-mcp skip flag — the auto-connect path was already done. No changes needed there.
+- MODIFIED cli.ts: added the 7 client subcommand handlers + dispatch without breaking MCP-1's `mcp serve`:
+  - In `runMCPCommand`: replaced the early `if (sub !== 'serve')` rejection with a dispatch list — 7 client subcommands (list-servers, add, remove, connect, disconnect, tools, call) handled first, then the existing `serve` flow untouched.
+  - `runMCPListServers`: writeDefaultConfig (materialise template), list every entry with [connected|enabled|disabled] state + transport + command/url + env keys.
+  - `runMCPAddServer`: parse `--command --args --env=K:V,K:V --transport --url --enabled`, validate (stdio⇒command, http⇒url), persist via mcpAddServer. Env pairs split on comma then FIRST colon only (so values can contain colons).
+  - `runMCPRemoveServer`: disconnect (best-effort) + mcpRemoveServer.
+  - `runMCPConnectServer`: connect, eagerly print every exposed tool + resource count, then disconnect + process.exit(0) (one-shot verification — avoids leaking the spawned npx subprocess that keeps the Node event loop alive).
+  - `runMCPDisconnectServer`: delegates to mcpRegistry.disconnect (marks enabled=false in config).
+  - `runMCPListTools`: auto-connects via connectAll (each CLI invocation is its own process — registry is in-memory only), prints `server.tool` dotted names + first-line descriptions, then disconnects + exits.
+  - `runMCPCallTool`: auto-connects to the specific server named in `<server.tool>`, calls the tool, prints text content blocks (or JSON fallback for non-text results), then disconnects + exits.
+  - Rewrote printMCPHelp with two sections: SERVER mode (serve) + CLIENT mode (the 7 new subcommands) with flags + examples.
+  - Updated top-level printHelp MCP section to list the 7 new subcommands.
+- Verification: `npx tsc --noEmit` → EXIT=0; `bun run lint` at /home/z/my-project → EXIT=0; all 7 spec verification steps pass (list-servers empty, add test-fs, list-servers shows disabled, connect lists 14 tools from the real @modelcontextprotocol/server-filesystem package, remove test-fs). Bonus: failure path (broken command) returns friendly `spawn ENOENT` + EXIT=1; `mcp tools` auto-connects and lists 14 `test-fs.*` tools; `mcp call test-fs.list_allowed_directories '{}'` returns `Allowed directories:\n/tmp`. Pre-compile `npx tsc` produces dist/mcp/{client,registry,bridge,index}.{js,d.ts}.
+
+Stage Summary:
+- Files: src/cli.ts (MODIFIED — added 7 client subcommand handlers + dispatch + expanded help text). Pre-existing (no changes needed): src/mesh/mcp-config.ts, src/mcp/client.ts, src/mcp/registry.ts, src/mcp/bridge.ts, src/mcp/index.ts.
+- CLI commands added: `chismoso mcp <list-servers|add|remove|connect|disconnect|tools|call>` — all coexist with MCP-1's `chismoso mcp serve`.
+- Auto-connect path (investigate/investigate-react/watch) was already wired by MCP-1's autoConnectMCP helper — MCP-2 supplies the registry + bridge that helper relies on.
+- End-to-end verified against the real `@modelcontextprotocol/server-filesystem` MCP server (14 tools, read_file/write_file/list_directory/…).
+
+---
+Task ID: MCP-3
+Agent: mcp-docs
+Task: Write MCP documentation + example configs
+
+Work Log:
+- Leí worklog.md (primeras 100 líneas + entradas MCP-1 y MCP-2 al final) para entender el estado del proyecto y los dos tasks previos de MCP.
+- Leí chismoso/README.md (576 líneas) — confirmé que la sección "Interoperabilidad" termina en línea 507 con `---` y que NO existía sección MCP previa. Confirmé que no había mención a "Model Context Protocol" en README.
+- Leí src/mcp/server.ts (MCP-1) — verify SERVER_NAME='chismoso-mcp-server', SERVER_VERSION='1.3.0', capabilities (tools/resources/prompts con listChanged:false), redirectConsoleToStderr() para stdio, startStdioServer().
+- Leí src/mcp/tools.ts — extraje los 8 tools con sus inputSchema exactos: chismoso_investigate (objective, geography?, maxQueries 1-50, maxRuntimeMs 5000-600000), chismoso_semantic_search (query, topK 1-50 default 10), chismoso_list_investigations (limit 1-200 default 20), chismoso_get_investigation (id), chismoso_list_anomalies (topic?), chismoso_list_topics (sin args), chismoso_get_topic_history (topic, limit 1-200 default 20), chismoso_list_providers (sin args).
+- Leí src/mcp/resources.ts — 5 static URIs + 1 template: chismoso://investigations/latest, chismoso://topics, chismoso://anomalies/active, chismoso://providers, chismoso://opportunities/top + chismoso://investigations/{id} (template). Todos mimeType application/json.
+- Leí src/mcp/prompts.ts — 3 prompts: investigate_topic(topic req, geography? opt), compare_topics(topicA req, topicB req), deep_dive_opportunity(investigationId req, opportunityIndex? opt default 0).
+- Leí src/mcp/client.ts (MCP-2) — client wrapper con StdioClientTransport / SSEClientTransport / StreamableHTTPClientTransport, connectToMCPServer + callMCPTool + readMCPResource + disconnectMCPServer exports.
+- Leí src/cli.ts — verifiqué los subcomandos: `mcp serve` (default stdio, flags --transport=stdio y --inspect), 7 client subcommands (list-servers, add, remove, connect, disconnect, tools, call), flag --no-mcp en investigate/investigate-react/watch para skip auto-connect.
+- Leí src/mesh/mcp-config.ts — schema exacta: { servers: { name: { command, args, env?, transport: 'stdio'|'http', url?, enabled } } }, DEFAULT_CONFIG_PATH=/home/z/my-project/chismoso/data/mcp-servers.json, override con env CHISMOSO_MCP_CONFIG.
+- Observé que docs/MCP.md (834 líneas) y docs/mcp-examples/claude-desktop-config.json + cursor-config.json ya existían de un intento previo con estructura ligeramente distinta (incluía una sección "HTTP/SSE transport" propia que contradecía el TODO note del spec). docs/mcp-examples/continue-config.json y custom-client.ts NO existían.
+- Reescribí docs/MCP.md desde cero (908 líneas) siguiendo el spec exacto: 12 secciones numeradas + índice + apéndice. Cada tool con tabla de params (nombre, tipo, requerido, default, descripción). Resources listados en tabla con URI + nombre + descripción. Prompts con tablas de arguments. ASCII diagrama de arquitectura mostrando CHISMOSO como Server y Client simultáneamente. Sección 3 aclara explícitamente "HTTP/SSE no implementado en V1.3 — TODO".
+- Verifiqué los 2 example JSON ya existentes (claude-desktop-config.json 27 líneas, cursor-config.json 28 líneas) — ambos válidos, alineados con el spec (mismos campos requeridos, paths absolutos, comments helpful adicionales). Los dejé sin cambios.
+- Creé docs/mcp-examples/continue-config.json (29 líneas) — mismo patrón que los anteriores, schema https://json.schemastore.org/continue-config.json, paths para Linux/macOS/Windows.
+- Creé docs/mcp-examples/custom-client.ts (80 líneas) — ej del spec ampliado con comentarios JSDoc, bloques numerados, manejo de errores en main() y referencia a src/mcp/client.ts para caso productivo.
+- Modifiqué chismoso/README.md — inserté sección "## MCP (Model Context Protocol)" entre la sección "Interoperabilidad" (línea 507) y "Limitaciones conocidas (V1)" (antes línea 509, ahora 531). Incluye bullets Server+Client, link relativo docs/MCP.md, y 3 comandos CLI de ejemplo.
+- Verificación:
+  - JSON validez (node JSON.parse): 3/3 OK (claude-desktop, cursor, continue).
+  - TypeScript syntax (tsc --noEmit --strict): 0 errores en custom-client.ts.
+  - MCP.md section count: 12 numeradas + ÍNDICE + Apéndice = 14 headings `## `.
+  - README link: docs/MCP.md existe y resuelve.
+  - MCP.md links internos: 4/4 (claude-desktop-config.json, cursor-config.json, continue-config.json, custom-client.ts) existen en docs/mcp-examples/.
+  - No toqué .ts source files, ARCHITECTURE.md, DELIVERY.md, DEFINITION_OF_DONE.md.
+
+Stage Summary:
+- Files: docs/MCP.md (NEW/REWRITTEN, 908 líneas, 12 secciones spec + índice + apéndice), docs/mcp-examples/claude-desktop-config.json (unchanged, 27 líneas), docs/mcp-examples/cursor-config.json (unchanged, 28 líneas), docs/mcp-examples/continue-config.json (NEW, 29 líneas), docs/mcp-examples/custom-client.ts (NEW, 80 líneas), README.md (MODIFIED — added MCP section ~24 líneas entre Interoperabilidad y Limitaciones).
+- MCP.md sections: 12 (¿Qué es MCP?, Arquitectura MCP en CHISMOSO, CHISMOSO como MCP Server, CHISMOSO como MCP Client, Configuración Claude Desktop, Cursor, Continue.dev, Ejemplos de uso, Consumiendo otros MCP servers, Cliente custom, Seguridad, Troubleshooting).
+- Example configs: 4 (claude-desktop, cursor, continue, custom-client).

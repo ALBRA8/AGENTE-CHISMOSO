@@ -506,6 +506,28 @@ En V1, el hand-off es **contractual pero no IPC**: CHISMOSO produce el `Opportun
 
 ---
 
+## MCP (Model Context Protocol)
+
+CHISMOSO V1.3 soporta MCP — el estándar abierto de Anthropic para LLM ↔ sistemas externos.
+
+- **Como Server**: expone 8 tools, 6 resources y 3 prompts. Compatible con Claude Desktop, Cursor, Continue.dev, Cline.
+- **Como Client**: consume MCP servers externos (GitHub, Filesystem, Slack) y los registra como tools nativos en el orchestrator.
+
+Ver [`docs/MCP.md`](docs/MCP.md) para configuración completa y ejemplos.
+
+```bash
+# Iniciar CHISMOSO como MCP server (stdio, para Claude Desktop)
+chismoso mcp serve
+
+# Listar MCP servers externos configurados
+chismoso mcp list-servers
+
+# Conectar a un servidor externo
+chismoso mcp connect github
+```
+
+---
+
 ## Limitaciones conocidas (V1)
 
 CHISMOSO V1 es honesto sobre lo que puede y lo que no:

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/continue-config.json",
+  "$comment": [
+    "Continue.dev config file.",
+    "  Linux/macOS: ~/.continue/config.json",
+    "  Windows:     %USERPROFILE%\\.continue\\config.json",
+    "",
+    "Replace /path/to/chismoso/ with the absolute path to your CHISMOSO install.",
+    "Make sure dist/cli.js exists (run `npm run build` or `bun run build` inside chismoso/).",
+    "After editing, reload Continue from the VSCode command palette:",
+    "  Cmd+Shift+P (macOS) / Ctrl+Shift+P (Linux/Windows) -> 'Continue: Reload'.",
+    "",
+    "The CHISMOSO tools will surface in the chat as @chismoso_investigate,",
+    "@chismoso_list_anomalies, @chismoso_semantic_search, etc."
+  ],
+  "mcpServers": {
+    "chismoso": {
+      "command": "node",
+      "args": [
+        "/path/to/chismoso/dist/cli.js",
+        "mcp",
+        "serve"
+      ],
+      "env": {
+        "CHISMOSO_DB_PATH": "/path/to/chismoso/data/chismoso.db"
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/cursor-mcp.json",
+  "$comment": [
+    "Cursor MCP config file.",
+    "  Workspace: .cursor/mcp.json in the project root",
+    "  Global:    ~/.cursor/mcp.json",
+    "",
+    "Replace /path/to/chismoso/ with the absolute path to your CHISMOSO install.",
+    "After editing, reload MCP servers from the command palette:",
+    "  Cmd+Shift+P (macOS) / Ctrl+Shift+P (Linux/Windows) → 'MCP: Reload Servers'.",
+    "",
+    "To see CHISMOSO's tools, open the chat panel and switch to Agent mode",
+    "(the model selector must be on a mode that supports tool calls)."
+  ],
+  "mcpServers": {
+    "chismoso": {
+      "command": "node",
+      "args": [
+        "/path/to/chismoso/dist/cli.js",
+        "mcp",
+        "serve"
+      ],
+      "env": {
+        "CHISMOSO_DB_PATH": "/path/to/chismoso/data/chismoso.db"
+      }
+    }
+  }
+}

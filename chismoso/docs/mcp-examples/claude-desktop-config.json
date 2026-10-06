@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-desktop-config.json",
+  "$comment": [
+    "Claude Desktop config file.",
+    "  macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json",
+    "  Windows: %APPDATA%\\Claude\\claude_desktop_config.json",
+    "  Linux:   ~/.config/Claude/claude_desktop_config.json",
+    "",
+    "Replace /path/to/chismoso/ with the absolute path to your CHISMOSO install.",
+    "Make sure dist/cli.js exists (run `npm run build` or `bun run build` inside chismoso/).",
+    "After editing this file, fully quit and relaunch Claude Desktop (Cmd+Q on macOS)."
+  ],
+  "mcpServers": {
+    "chismoso": {
+      "command": "node",
+      "args": [
+        "/path/to/chismoso/dist/cli.js",
+        "mcp",
+        "serve"
+      ],
+      "env": {
+        "CHISMOSO_DB_PATH": "/path/to/chismoso/data/chismoso.db",
+        "CHISMOSO_LOG_LEVEL": "info"
+      }
+    }
+  }
+}
