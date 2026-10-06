@@ -213,7 +213,7 @@ const MAX_DETAIL_FETCHES = 5;
 // Component
 // ---------------------------------------------------------------------------
 
-export function DashboardSummary() {
+export function DashboardSummary({ onOpenChat }: { onOpenChat?: () => void }) {
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [anomalyCount, setAnomalyCount] = useState<number | null>(null);
@@ -295,6 +295,27 @@ export function DashboardSummary() {
 
   return (
     <div className="space-y-4">
+      {/* AGENT-3: Chat CTA banner — surfaces the conversational agent */}
+      {onOpenChat && (
+        <button
+          type="button"
+          onClick={onOpenChat}
+          className="group w-full text-left rounded-lg border border-violet-200 dark:border-violet-900/60 bg-violet-50 dark:bg-violet-950/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors px-3 py-2.5 flex items-center gap-2 shadow-sm"
+          aria-label="Abrir chat con CHISMOSO"
+        >
+          <span className="text-base leading-none" aria-hidden>💡</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-medium text-violet-900 dark:text-violet-100">
+              Tip: Habla con CHISMOSO
+            </div>
+            <div className="text-[10px] text-violet-700/80 dark:text-violet-300/70 truncate">
+              Pregunta por tendencias, anomalías o investigaciones en lenguaje natural.
+            </div>
+          </div>
+          <ArrowRight className="h-3.5 w-3.5 text-violet-500 group-hover:translate-x-0.5 transition-transform shrink-0" />
+        </button>
+      )}
+
       {/* Section header */}
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">

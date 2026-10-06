@@ -40,6 +40,9 @@ import { AnomalyAlerts } from '@/components/anomaly-alerts';
 import { TopicsEvolution } from '@/components/topics-evolution';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { DashboardSummary } from '@/components/dashboard-summary';
+// AGENT-3: Chat agent integration — floating sidebar + toggle button
+import { ChatAgent } from '@/components/chat-agent';
+import { ChatToggle } from '@/components/chat-toggle';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -555,6 +558,9 @@ export default function Home() {
   const [streaming, setStreaming] = useState(false);
   // NEW: Right-panel tab — "providers" (existing), "anomalies", "topics", "mesh", "semantic"
   const [sideTab, setSideTab] = useState<'providers' | 'anomalies' | 'topics' | 'mesh' | 'semantic'>('providers');
+  // AGENT-3: chat sidebar state — when open, the page content shrinks
+  // (380px right padding on lg+ screens) so the chat doesn't overlap content.
+  const [chatOpen, setChatOpen] = useState(false);
   // NEW: Semantic search state
   const [semQuery, setSemQuery] = useState('');
   const [semResults, setSemResults] = useState<Array<{ signalId: string; score: number; snippet: string; url?: string }>>([]);
@@ -765,7 +771,11 @@ export default function Home() {
   // --------------------------------------------------------------------------
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/30">
+    <div
+      className={`min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/30 transition-all duration-300 ${
+        chatOpen ? 'lg:pr-[380px]' : ''
+      }`}
+    >
       {/* Header */}
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30">
         <div className="container mx-auto px-4 py-3 flex items-center justify-between gap-3">
@@ -1075,7 +1085,7 @@ export default function Home() {
             )}
 
             {!result && !loading && !streaming && (
-              <DashboardSummary />
+              <DashboardSummary onOpenChat={() => setChatOpen(true)} />
             )}
           </div>
 
@@ -1293,6 +1303,12 @@ export default function Home() {
           </span>
         </div>
       </footer>
+
+      {/* AGENT-3: Floating chat toggle + chat sidebar.
+          Rendered at the end of the main wrapper so they overlay correctly
+          and so the lg:pr-[380px] above reserves space on large screens. */}
+      <ChatToggle open={chatOpen} onToggle={() => setChatOpen(!chatOpen)} />
+      <ChatAgent open={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   );
 }

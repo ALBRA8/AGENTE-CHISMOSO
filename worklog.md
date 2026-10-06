@@ -678,3 +678,79 @@ Stage Summary:
 - Files: 15 (1 new lib/api-response.ts + 14 route files modified)
 - Routes normalized: 14
 - Inconsistent shapes fixed: 11 (the 11 flagged in AUDIT-CODE HIGH #4)
+
+---
+Task ID: AGENT-2
+Agent: chat-ui
+Task: Implement conversational agent UI components (chat sidebar, message bubbles, input, quick actions)
+
+Work Log:
+- Leí /home/z/my-project/worklog.md (estado del proyecto: FASE 0-9 completas, FIX-1..FIX-4 aplicados, dashboard funcional).
+- Leí /home/z/my-project/src/components/investigation-stream.tsx para entender el patrón de consumo SSE con EventSource + parseo de eventos (`event: <type>\ndata: <json>`).
+- Leí /home/z/my-project/src/app/page.tsx (1100+ líneas) para entender el layout del dashboard y confirmar que mi componente se integrará condicionalmente en un sidebar derecho.
+- Listé /home/z/my-project/src/components/ui/ para confirmar la disponibilidad de Button, Input, Card, Badge, ScrollArea. Verifiqué las variantes y sizes reales de Button (variant: default/destructive/outline/secondary/ghost/link; size: default/sm/lg/icon) y Badge (default/secondary/destructive/outline) para no usar combinaciones inexistentes.
+- Verifiqué que /api/chat NO existe todavía (AGENT-1 lo está construyendo en paralelo) — mi componente degrada con un bubble de error `⚠ HTTP 404` si el endpoint no responde, lo cual es el comportamiento esperado durante la integración paralela.
+- Verifiqué que /api/anomalies SÍ existe (lo usa el polling de V1).
+- Creé src/components/chat-message.tsx: componente de bubble único. Renderiza user (violeta, derecha), assistant (muted, izquierda, con caret `▌` animado cuando streaming), tool (chip monoespaciado con `→ {toolName}` y resumen debajo) y anomaly (callout ámbar con severidad + zscore + topic). system messages → null.
+  - Cambios vs spec: tipé `toolArgs?: unknown` en vez de `any` (strict TS) y `anomaly` como objeto tipado (no `any`) para que el render defensivo use optional-chaining y no rompa si el backend envía un payload parcial.
+- Creé src/components/chat-input.tsx: Input + Button icono. Enter envía, Shift+Enter no hace nada (input es single-line). Disablea send cuando busy o vacío. ARIA labels en Input + Button.
+- Creé src/components/chat-quick-actions.tsx: 4 chips (Qué viste hoy / Anomalías / Topics / Top oportunidades) con iconos lucide. `as const` en el array para tipar el campo `icon` como union literal.
+- Creé src/components/chat-agent.tsx: sidebar fijo derecho 380px, top-14, bottom-0, z-40, flex-col.
+  - Estado: messages[], sessionId, busy, streamingText. Memoria sólo en sesión (useState, no localStorage).
+  - send(text): POST /api/chat con {message, sessionId}, lee el body como ReadableStream, decodifica con TextDecoder, parsea eventos SSE separados por `\n\n`. Maneja `event: token/tool_call/tool_result/proactive_anomaly/done/error`.
+  - En `tool_result`: busca el último mensaje de tool con mismo `toolName` y content vacío, lo actualiza in-place (patrón inmutable con spread).
+  - En `done`: hace flush del streamingText pendiente como mensaje assistant final y persiste el sessionId devuelto.
+  - En `error`: añade bubble `⚠ {message}` (lo mismo para errores de red atrapados en el catch).
+  - Polling de anomalías cada 60s cuando el sidebar está abierto (V1: no-op en success, sólo mantiene hook + cleanup cableados para V2).
+  - Auto-scroll al fondo en cada cambio de messages/streamingText.
+  - Vacío inicial: mensaje de bienvenida con icono Zap violeta.
+- Reemplacé `while (true)` por `for (;;)` con comentario explicando la terminación (lint warn: unused eslint-disable).
+- Lint: 0 errors, 0 warnings. tsc --noEmit: 0 errores en mis 4 archivos (otros errores preexistentes son de chismoso/tests, examples/, skills/, y src/app/page.tsx — todos fuera de mi dominio).
+- Dev server log: ✓ Ready, sin errores de compilación de mis archivos.
+
+Stage Summary:
+- Files: src/components/chat-message.tsx (NEW, ~100 LOC), src/components/chat-input.tsx (NEW, ~55 LOC), src/components/chat-quick-actions.tsx (NEW, ~40 LOC), src/components/chat-agent.tsx (NEW, ~270 LOC)
+- Components: ChatMessage (props: {msg: ChatMsg, streaming?: boolean}), ChatInput (props: {onSend, disabled?}), ChatQuickActions (props: {onAction, disabled?}), ChatAgent (props: {open, onClose})
+- Integration: `<ChatAgent open={chatOpen} onClose={() => setChatOpen(false)} />` — el agente integrador añade un botón toggle (p.ej. `<Button onClick={() => setChatOpen(true)}><Radar/></Button>`) en el header del dashboard y el sidebar se renderiza fijo a la derecha sin afectar el flujo principal. El componente retorna null cuando open=false.
+
+---
+Task ID: AGENT-3
+Agent: chat-layout-integration
+Task: Integrate chat agent into dashboard layout with responsive behavior
+
+Work Log:
+- Read worklog, page.tsx, dashboard-summary.tsx to understand current 2-column dashboard.
+- Created `src/components/chat-toggle.tsx` — fixed bottom-right Button (z-50) that expands to "Hablar con CHISMOSO" when closed and shrinks to a 40px circular X icon when open; aria-label for a11y; compact label on mobile.
+- Modified `src/app/page.tsx`: added imports for ChatAgent + ChatToggle; added `chatOpen` state; wrapped root div with `transition-all duration-300 ${chatOpen ? 'lg:pr-[380px]' : ''}` so content reserves 380px on lg+ when chat is open; rendered `<ChatToggle />` and `<ChatAgent open={chatOpen} onClose={() => setChatOpen(false)} />` at end of root wrapper (after footer); passed `onOpenChat={() => setChatOpen(true)}` to DashboardSummary.
+- Modified `src/components/dashboard-summary.tsx`: signature now `DashboardSummary({ onOpenChat })`; added a clickable "💡 Tip: Habla con CHISMOSO →" banner above the section header (purple-tinted, hover-nudge arrow) that calls `onOpenChat()`. Rendered only when the prop is supplied (backward compatible).
+- Ran `bun run lint` — clean (exit 0).
+- Browser verification: could not run because the Next.js dev server was not currently serving on port 3000 during this pass and AGENT-2 had not yet landed `chat-agent.tsx`. Integration is wired to AGENT-2's expected API contract (`<ChatAgent open onClose />`) so once AGENT-2 ships, the full chain works end-to-end with no further AGENT-3 changes.
+
+Stage Summary:
+- Files: src/components/chat-toggle.tsx (NEW), src/app/page.tsx (MODIFIED — imports/state/wrapper-padding/render), src/components/dashboard-summary.tsx (MODIFIED — onOpenChat prop + banner)
+- Layout: closed = full-width dashboard (unchanged) with floating "Hablar con CHISMOSO" button bottom-right. Open on lg+ = page wrapper shrinks by 380px right padding (animated), chat fills the right 380px slot, toggle morphs into circular X. Open on mobile = chat overlays full width (modal-like) since lg:pr-[380px] doesn't apply.
+- Lint: clean (exit 0). Full chain becomes functional once AGENT-2 ships chat-agent.tsx.
+
+---
+Task ID: AGENT-1
+Agent: chat-backend
+Task: Implement conversational agent backend with SSE + tool calling
+
+Work Log:
+- Leí worklog.md (Fases 0-9 completas, dashboard integrado, 41/41 tests), chismoso/src/orchestrator/{llm,tools,react}.ts (LLMClient wraps ZAI chat.completions, 4 tools de investigación, ReAct pattern con JSON output), src/app/api/investigate/stream/route.ts (patrón SSE con ReadableStream + TextEncoder), src/app/api/{investigations,investigate,semantic-search,anomalies,alerts,topics}/route.ts (contracts), src/lib/{api-response,rate-limit,anomaly-detector}.ts (helpers), node_modules/z-ai-web-dev-sdk/dist/index.d.ts (chat.completions.create — NO `tools` param documented, so usé ReAct-style JSON prompt como en chismoso/src/orchestrator/react.ts).
+- Creé src/lib/chat-session.ts: ChatSession interface con lastSeenAnomalyIds Set + lastPolledAnomaliesAt; createSession(ip) genera sess_<base36>_<rand>; appendMessage aplica rolling window 30 msgs (keep system + last 29); setInterval unref'd cada 10min limpia sesiones >1h; SYSTEM_PROMPT "analista conciso" (telegram, español, bullets, JSON para tool calls).
+- Creé src/app/api/chat/tools.ts: 6 ChatTools async que fetchean http://127.0.0.1:3000/api/* (loopback, sin DNS, sin Caddy): list_investigations, load_investigation, start_investigation (POST /api/investigate con maxQueries=4 maxRuntimeMs=120000), semantic_search, list_anomalies (además updatea session.lastSeenAnomalyIds para evitar doble-notificación con /api/chat/poll), list_topics. Cada tool retorna string conciso (no JSON anidado) para que el LLM lo consuma directo.
+- Creé src/app/api/chat/route.ts: POST handler con rate limit 20/min/IP, body {message, sessionId?}, crea sesión si no viene sessionId, buildLLMMessages (system + last 10 history, role 'tool' se reescribe como user con prefijo [tool_result: name]), agente loop max 6 iteraciones (5 tool calls + 1 reply), parseDecision tolera JSON estricto + ```json fences + plain-text fallback, SSE events: session/tool_call/tool_result/token (chunk por palabra con delay 12ms)/done/error. GET handler de info/health sin rate limit.
+- Creé src/app/api/chat/poll/route.ts: GET ?sessionId=sess_xxx, rate limit 15/min/IP, mínimo intervalo 30s por sesión (sin 429 — retorna throttled:true con retryAfterSec), llama detectAnomalies(null), diff contra session.lastSeenAnomalyIds, actualiza el set, trim a 200 IDs (drop los que ya no están activos), retorna {newAnomalies, totalActive, seenCount}.
+- Verificación: `bun run lint` pasa limpio (0 warnings). `npx tsc --noEmit` pasa limpio para mis 3 archivos (los errores restantes son pre-existentes en chismoso/tests/, examples/, skills/, src/app/page.tsx — fuera de mi dominio).
+- No pude verificar con curl porque el dev server no estaba corriendo en el momento de la prueba (auto-restart del sistema no activo); el código está verificado vía lint+tsc y seguirá el patrón SSE probado de /api/investigate/stream/route.ts.
+
+Stage Summary:
+- Files: src/lib/chat-session.ts, src/app/api/chat/tools.ts, src/app/api/chat/route.ts, src/app/api/chat/poll/route.ts
+- Tools: list_investigations (lista IDs+conteos), load_investigation (carga reporte por ID), start_investigation (inicia nueva chismoso), semantic_search (TF-IDF sobre signals), list_anomalies (anomalías activas + marca vistas), list_topics (topics en observación)
+- API:
+  - POST /api/chat: body {message, sessionId?}, response text/event-stream con events session/tool_call/tool_result/token/done/error. Max 5 tool calls/turno. Max 60s. Rate 20/min/IP.
+  - GET /api/chat: contract info, sin rate limit.
+  - GET /api/chat/poll?sessionId=sess_xxx: retorna {newAnomalies, totalActive, seenCount, throttled?}. Rate 15/min/IP. Min 30s entre polls por sesión.
+- SSE events emitted: session (sessionId), tool_call (name,args,iteration), tool_result (name,summary,ok,iteration,durationMs), token (text chunk), done (sessionId,toolCalls,durationMs,error?,exhausted?), error (message,iteration?)
+- Session: in-memory per-IP, rolling 30-msg window, cleanup cada 10min sesiones >1h, lastSeenAnomalyIds compartido entre tool list_anomalies y /api/chat/poll para evitar doble-notificación.
