@@ -30,6 +30,7 @@
 
 import { mcpRegistry } from './registry.js';
 import type { ToolDefinition } from '../orchestrator/tools.js';
+import { ErrorCode } from '../errors.js';
 
 // ---------------------------------------------------------------------------
 // MCP TOOL → CHISMOSO ToolDefinition
@@ -39,6 +40,14 @@ import type { ToolDefinition } from '../orchestrator/tools.js';
  * Builds CHISMOSO ToolDefinitions for every connected MCP tool. The
  * orchestrator can register these alongside its native tools. Each call
  * routes to `mcpRegistry.callTool(fullName, args)`.
+ *
+ * §23 compliance: MCP-bridged tools are categorised as EXTERNAL (they
+ * cross process boundaries), risk=medium (we cannot audit their
+ * behaviour), side_effects=external_call, allowedInModes=['react',
+ * 'mcp_client', 'autonomous'] (NOT 'sync' — the fixed-plan orchestrator
+ * does not invoke MCP tools). Their timeout_ms is set to a generous 30s
+ * because MCP servers may legitimately take longer than the native
+ * provider tools.
  *
  * NOTE: returns a fresh array on each call, but the tool `execute`
  * closures read the live registry at call time — so a tool registered
@@ -53,8 +62,26 @@ export function getMCPToolDefinitions(): ToolDefinition<any, any>[] {
       `[MCP:${mcpTool.serverName}] ` +
       (mcpTool.description ?? mcpTool.toolName);
     return {
+      id: `chismoso.tool.mcp.${flatName}.v1`,
       name: flatName,
       description,
+      purpose: `Invoke remote MCP tool ${mcpTool.fullName} on server ${mcpTool.serverName}.`,
+      category: ['EXTERNAL' as const],
+      permissions: {
+        categories: ['EXTERNAL' as const],
+        allowedInModes: ['react' as const, 'mcp_client' as const, 'autonomous' as const],
+      },
+      risk: 'medium' as const,
+      side_effects: 'external_call' as const,
+      timeout_ms: 30_000,
+      retry_policy: {
+        maxRetries: 1,
+        baseDelayMs: 1000,
+        backoffMultiplier: 2,
+        retryableErrors: [ErrorCode.TEMPORARY_FAILURE, ErrorCode.TIMEOUT],
+      },
+      evidence_behavior: 'none' as const,
+      audit_behavior: 'logged' as const,
       async execute(args: any) {
         const result = await mcpRegistry.callTool(mcpTool.fullName, args);
         // MCP returns `{ content: [{ type: 'text', text: '...' }, ...], ... }`.

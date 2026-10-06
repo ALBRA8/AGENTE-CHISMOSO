@@ -14,7 +14,7 @@
  * Los pesos están en TREND_WEIGHTS y son ajustables sin tocar lógica.
  */
 
-import type { Evidence, Signal, Trend, TrendState } from '../models.js';
+import type { Evidence, Signal, Trend, TrendDirection, TrendState } from '../models.js';
 import { generateId, nowISO, TrendState as TS } from '../models.js';
 import { crossSourceConfidence, countDistinctSources, countDistinctSourceTypes } from './cross-source.js';
 import { logger } from '../logger.js';
@@ -104,11 +104,20 @@ export function detectTrend(input: TrendInput): TrendResult {
     growth,
   });
 
+  // §17 — direction is computed from growth:
+  //   growth > 1.2 → 'up'   (más señales recientes que históricas)
+  //   growth < 0.8 → 'down' (menos señales recientes que históricas)
+  //   else          → 'flat'
+  // When there is no historical baseline (historicalSignals=[]), growth
+  // defaults to 1.0 — flat is the honest answer in that case.
+  const direction: TrendDirection = computeDirection(growth);
+
   const trend: Trend = {
     id: generateId('trend'),
     topic: input.topic,
-    description: describe(canonical, state, sourcesCount, sourceTypesCount, signals.length),
+    description: describe(canonical, state, direction, sourcesCount, sourceTypesCount, signals.length),
     state,
+    direction,
     confidence: crossSource,
     sourcesCount,
     signalsCount: signals.length,
@@ -137,6 +146,7 @@ export function detectTrend(input: TrendInput): TrendResult {
   logger.info('Trend detected', {
     topic: input.topic,
     state,
+    direction,
     score: score100,
     sources: sourcesCount,
     sourceTypes: sourceTypesCount,
@@ -144,6 +154,24 @@ export function detectTrend(input: TrendInput): TrendResult {
   });
 
   return { trend };
+}
+
+/**
+ * §17 — compute trend direction from growth ratio.
+ *
+ * Growth is the ratio of recent signals to historical signals:
+ *   - growth > 1.2 → 'up'   (recent signals outnumber historical by 20%+)
+ *   - growth < 0.8 → 'down' (recent signals are less than 80% of historical)
+ *   - else          → 'flat'
+ *
+ * When there is no historical baseline (growth defaults to 1.0 in
+ * detectTrend), direction is 'flat' — the honest answer is "we don't know
+ * yet whether this is going up or down".
+ */
+export function computeDirection(growth: number): TrendDirection {
+  if (growth > 1.2) return 'up';
+  if (growth < 0.8) return 'down';
+  return 'flat';
 }
 
 function classifyState(opts: {
@@ -166,8 +194,15 @@ function classifyState(opts: {
   return TS.WEAK_SIGNAL;
 }
 
-function describe(canonical: string, state: TrendState, sources: number, types: number, signals: number): string {
-  return `${canonical} — ${state.toLowerCase().replace(/_/g, ' ')} — ${signals} signals across ${sources} sources (${types} source types)`;
+function describe(
+  canonical: string,
+  state: TrendState,
+  direction: TrendDirection,
+  sources: number,
+  types: number,
+  signals: number,
+): string {
+  return `${canonical} — ${state.toLowerCase().replace(/_/g, ' ')} — direction: ${direction} — ${signals} signals across ${sources} sources (${types} source types)`;
 }
 
 function clamp(x: number, min: number, max: number): number {

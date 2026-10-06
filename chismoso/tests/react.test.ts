@@ -67,8 +67,27 @@ class StubLLM extends LLMClient {
 /** A stub tool that records the args it was called with and returns empty results. */
 function mkStubTool(name: string): ToolDefinition<any, any> {
   return {
+    id: `chismoso.tool.${name}.stub.v1`,
     name,
     description: `stub tool ${name}`,
+    purpose: `Stub for ${name} in tests.`,
+    category: ['READ', 'EXTERNAL'],
+    permissions: {
+      categories: ['READ', 'EXTERNAL'],
+      allowedInModes: ['sync', 'react', 'autonomous'],
+    },
+    risk: 'low',
+    side_effects: 'persist',
+    timeout_ms: 10_000,
+    retry_policy: {
+      maxRetries: 0,
+      baseDelayMs: 0,
+      backoffMultiplier: 1,
+      retryableErrors: [],
+    },
+    evidence_behavior: 'produces',
+    audit_behavior: 'logged',
+    provider: name,
     async execute(_args: any, _ctx: ToolContext) {
       return {
         providerName: name,

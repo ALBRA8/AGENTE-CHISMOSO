@@ -32,10 +32,12 @@
 
 import type { LLMClient } from './llm.js';
 import { ResearchPlanner, type ResearchPlan } from './planner.js';
-import type { ToolRegistry, ToolContext } from './tools.js';
+import type { ToolRegistry, ToolContext, ToolDefinition } from './tools.js';
+import { canCallTool, callWithTimeout, attachQualityTracker } from './tools.js';
 import type { ProviderRegistry } from '../providers/base.js';
 import type { Repositories } from '../repositories.js';
 import type { ChismosoDB } from '../db.js';
+import { ProviderQualityTracker } from '../providers/quality.js';
 import {
   DEFAULT_BUDGET,
   generateId,
@@ -64,6 +66,8 @@ import {
   loadAllEmbeddings,
   storeEmbeddings,
 } from '../db-extensions/embeddings.sql.js';
+import { MemoryConsolidator, MemoryRepository } from '../memory/index.js';
+import { ExecutionTraceRepository } from '../execution-trace/index.js';
 
 export interface OrchestratorConfig {
   db: ChismosoDB;
@@ -105,6 +109,21 @@ export class Orchestrator {
     const budget: InvestigationBudget = { ...this.budget, ...(input.budget ?? {}) };
     const geography = input.geography ?? 'global';
 
+    // §30 — open an ExecutionTrace BEFORE doing any work, so a crash mid-run
+    // still leaves a 'running' row in execution_traces that the next `chismoso
+    // trace list` will surface (allowing operators to spot hung runs).
+    const traceRepo = new ExecutionTraceRepository(this.cfg.db);
+    const trace = traceRepo.start(
+      'investigate',
+      {
+        objective: input.objective,
+        geography,
+        budget: { maxIterations: budget.maxIterations, maxQueries: budget.maxQueries },
+      },
+      { related_investigation_id: investigationId },
+    );
+    const executionId = trace.id;
+
     const investigation: Investigation = {
       id: investigationId,
       query: input.objective,
@@ -122,9 +141,10 @@ export class Orchestrator {
       iterations: 0,
       budget,
       providerRuns: [],
+      executionId,
     };
 
-    logger.info('Investigation started', { investigationId, objective: input.objective, geography });
+    logger.info('Investigation started', { investigationId, executionId, objective: input.objective, geography });
 
     try {
       // ----------------------------------------------------------------------
@@ -143,6 +163,9 @@ export class Orchestrator {
         investigation.completedAt = nowISO();
         investigation.durationMs = Date.now() - new Date(startedAt).getTime();
         this.cfg.repositories.investigations.insert(investigation);
+        traceRepo.complete(executionId, 'failure', undefined, [
+          `planner_failed: ${e?.message ?? String(e)}`,
+        ]);
         throw e;
       }
 
@@ -154,6 +177,10 @@ export class Orchestrator {
         repositories: this.cfg.repositories,
         providerRegistry: this.cfg.providerRegistry,
       };
+      // Attach the provider quality tracker so built-in tools can record
+      // their call outcomes (spec §10).
+      const qualityTracker = new ProviderQualityTracker(this.cfg.db);
+      attachQualityTracker(ctx, qualityTracker);
 
       // ----------------------------------------------------------------------
       // STEP 2-4: COLLECT (loop controlado por budget)
@@ -196,13 +223,22 @@ export class Orchestrator {
             investigation.errors.push(`unknown_tool: ${q.providerName} (looked up as ${toolName})`);
             continue;
           }
+          // §23 enforcement: check whether this tool may be invoked in 'sync' mode.
+          const permit = canCallTool(tool as ToolDefinition, 'sync');
+          if (!permit.ok) {
+            investigation.errors.push(`tool_not_allowed: ${toolName} — ${permit.reason}`);
+            continue;
+          }
+          // §30 — record tool invocation on the execution trace (persisted
+          // immediately so a crash mid-run still leaves an accurate record).
+          traceRepo.addTool(executionId, toolName);
           try {
             if (toolName === 'search_web') {
-              await tool.execute({ query: q.query, geography, num: 10 }, ctx);
+              await callWithTimeout(tool as ToolDefinition, { query: q.query, geography, num: 10 }, ctx);
             } else if (toolName === 'search_community') {
-              await tool.execute({ query: q.query, num: 10 }, ctx);
+              await callWithTimeout(tool as ToolDefinition, { query: q.query, num: 10 }, ctx);
             } else if (toolName === 'collect_trends') {
-              await tool.execute({ topic: q.query, geography }, ctx);
+              await callWithTimeout(tool as ToolDefinition, { topic: q.query, geography }, ctx);
             } else if (toolName === 'deepen_content') {
               // deepen_content necesita URLs; no se invoca desde el plan
               // porque el plan solo contiene queries textuales.
@@ -211,7 +247,14 @@ export class Orchestrator {
               investigation.errors.push(`unsupported_tool: ${toolName}`);
             }
           } catch (e: any) {
-            investigation.errors.push(`tool_error[${q.providerName}]: ${e?.message ?? String(e)}`);
+            const msg = e?.message ?? String(e);
+            if (msg.startsWith('tool_timeout:')) {
+              investigation.errors.push(`tool_timeout[${q.providerName}]: ${msg}`);
+              traceRepo.addError(executionId, `tool_timeout[${q.providerName}]: ${msg}`);
+            } else {
+              investigation.errors.push(`tool_error[${q.providerName}]: ${msg}`);
+              traceRepo.addError(executionId, `tool_error[${q.providerName}]: ${msg}`);
+            }
           }
         }
         if (totalQueries >= budget.maxQueries || totalProviderCalls >= budget.maxProviderCalls) break;
@@ -413,8 +456,43 @@ export class Orchestrator {
 
       this.cfg.repositories.investigations.insert(investigation);
 
+      // ----------------------------------------------------------------------
+      // STEP 8: MEMORYDV CONSOLIDATION (spec §12-§15)
+      // ----------------------------------------------------------------------
+      // After an Investigation persists trends/problems/opportunities, ingest
+      // them into the memory subsystem: novel observations become new
+      // MemoryRecord rows; corroborated ones get their existing memory
+      // promoted to VERIFIED (refreshing last_verified + updated_at so the
+      // decay clock resets).
+      //
+      // Memory is best-effort — any failure here MUST NOT fail the
+      // investigation. We also run applyDecay() so old memories get
+      // re-ranked on each investigation tick (cheap: only writes back rows
+      // whose status or relevance actually changed).
+      try {
+        const memoryRepo = new MemoryRepository(this.cfg.db);
+        const consolidator = new MemoryConsolidator(memoryRepo, this.cfg.repositories);
+        await consolidator.ingestInvestigation(investigation, trends, problems, opportunities);
+      } catch (e: any) {
+        logger.warn('Memory consolidation failed', {
+          investigationId,
+          err: e?.message ?? String(e),
+        });
+      }
+
+      try {
+        const memoryRepo = new MemoryRepository(this.cfg.db);
+        memoryRepo.applyDecay();
+      } catch (e: any) {
+        logger.warn('Memory decay failed', {
+          investigationId,
+          err: e?.message ?? String(e),
+        });
+      }
+
       logger.info('Investigation completed', {
         investigationId,
+        executionId,
         status: investigation.status,
         signals: signals.length,
         evidence: evidence.length,
@@ -423,6 +501,36 @@ export class Orchestrator {
         opportunities: opportunities.length,
         durationMs: investigation.durationMs,
       });
+
+      // §30 — close out the execution trace with summary counts. We always
+      // reach this point with a non-FAILED status (FAILED is set in the
+      // catch block below). INSUFFICIENT_EVIDENCE counts as success (the
+      // agent did its job; the world just didn't have enough signal).
+      traceRepo.complete(
+        executionId,
+        'success',
+        {
+          signalsCount: signals.length,
+          evidenceCount: evidence.length,
+          trendsCount: trends.length,
+          problemsCount: problems.length,
+          opportunitiesCount: opportunities.length,
+          investigationStatus: investigation.status,
+        },
+        // errors[]: investigation.errors already includes the per-tool errors
+        // that addError() persisted during the loop. Passing the full array
+        // here gives the trace the same complete error log the investigation
+        // has — both views stay in sync.
+        investigation.errors,
+        {
+          // tools_used is intentionally omitted — addTool() already persisted
+          // the canonical list to the DB during the loop. Passing
+          // trace.tools_used here would override the DB state with the
+          // stale in-memory array (we no longer mutate trace.tools_used in
+          // memory — we go straight through traceRepo.addTool).
+          evidence_ids: evidence.map((e) => e.id),
+        },
+      );
 
       return {
         investigation,
@@ -443,7 +551,21 @@ export class Orchestrator {
       } catch {
         /* ignore persistence errors during error path */
       }
-      logger.error('Investigation failed', { investigationId, err: e?.message ?? String(e) });
+      // §30 — close out the trace as 'failure' so the operator can find it
+      // via `chismoso trace list --status=failure`.
+      try {
+        traceRepo.complete(
+          executionId,
+          'failure',
+          undefined,
+          investigation.errors,
+          // tools_used intentionally omitted — see comment in the success
+          // path. The DB has the canonical list via addTool().
+        );
+      } catch {
+        /* best-effort — trace persistence must never mask the real error */
+      }
+      logger.error('Investigation failed', { investigationId, executionId, err: e?.message ?? String(e) });
       throw e;
     }
   }

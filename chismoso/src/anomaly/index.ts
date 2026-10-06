@@ -13,13 +13,19 @@
  *   - source_diversification  : a sourceType appeared that wasn't in baseline
  *   - confidence_drift        : confidence moving > 0.1 over last 5 obs
  *
- * The detector is read-only — it never writes to the DB. It can be invoked
- * from the CLI (`chismoso anomalies`), from a REST endpoint
- * (`GET /api/anomalies`) or directly from the scheduler (V2).
+ * The detector is read-only with respect to the topic_observations table —
+ * it never writes to topic_observations or signals. As of Task IMP-4
+ * (spec §20), it MAY emit alerts via an injected `AlertManager` (optional
+ * dep, set via the constructor). When an AlertManager is present, every
+ * emitted Anomaly is also passed to `manager.emit()`, which decides whether
+ * to persist a new alert row or suppress it (cooldown / dedup). The return
+ * value of detectAll() is unchanged — the Anomaly objects are still the raw
+ * statistical findings.
  */
 
 import type { Repositories } from '../repositories.js';
 import { mean, stddev, zscore, ewma, linearRegressionSlope } from './stats.js';
+import type { AlertManager } from '../alerts/manager.js';
 
 // Re-export the stats helpers + types from this barrel so callers can do a
 // single `import { AnomalyDetector, mean, zscore } from '../anomaly/index.js'`.
@@ -88,15 +94,26 @@ interface TopicObservationRow {
 export class AnomalyDetector {
   private readonly config: AnomalyDetectorConfig;
   private readonly subscribers: Array<(a: Anomaly) => void> = [];
+  private readonly alertManager?: AlertManager;
 
-  constructor(private repos: Repositories, config?: Partial<AnomalyDetectorConfig>) {
+  constructor(
+    private repos: Repositories,
+    config?: Partial<AnomalyDetectorConfig>,
+    alertManager?: AlertManager,
+  ) {
     this.config = { ...DEFAULT_ANOMALY_CONFIG, ...(config ?? {}) };
+    this.alertManager = alertManager;
   }
 
   /**
    * Detect anomalies across ALL topics that have observation history.
    *
    * Topics with fewer than `minSamples` observations are silently skipped.
+   *
+   * If an AlertManager is wired in, every emitted anomaly is also passed to
+   * `manager.emit()`. The manager decides whether to persist a new Alert
+   * row or SUPPRESS it (cooldown active). Suppressed emissions are silent
+   * at this layer — the Anomaly is still returned to the caller.
    */
   detectAll(): Anomaly[] {
     const topics = this.listObservedTopics();
@@ -109,6 +126,27 @@ export class AnomalyDetector {
     for (const a of out) {
       for (const cb of this.subscribers) {
         try { cb(a); } catch { /* subscriber errors are non-fatal */ }
+      }
+    }
+    // Persist alerts for each emitted anomaly (Task IMP-4, spec §20).
+    // The manager is responsible for dedup + cooldown; calling emit() on
+    // every anomaly is safe — duplicates are suppressed inside the manager.
+    if (this.alertManager) {
+      for (const anomaly of out) {
+        try {
+          const result = this.alertManager.emit(anomaly);
+          if (result.suppressed) {
+            // Suppression is normal — log at debug level only.
+            // eslint-disable-next-line no-console
+            console.debug?.(`[anomaly] alert suppressed: ${anomaly.topic}:${anomaly.type} (${result.reason})`);
+          }
+        } catch (e) {
+          // Alert persistence failures MUST NOT block detection — the
+          // anomalies are still returned to the caller. The error is logged
+          // to stderr so operators see it but detection continues.
+          // eslint-disable-next-line no-console
+          console.error(`[anomaly] alert emit failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
     }
     return out;

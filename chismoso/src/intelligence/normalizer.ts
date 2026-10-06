@@ -139,6 +139,12 @@ export interface NormalizeContext {
   geography: string;
   keywordHint?: string;
   investigationId?: string;
+  /**
+   * How this evidence was obtained — drives Evidence.provenance (§8).
+   * Defaults to the sourceType if not specified.
+   * Examples: 'web_search' | 'reddit_communities' | 'mesh_external' | 'deepen_content'.
+   */
+  provenance?: string;
 }
 
 export interface NormalizedSignal {
@@ -146,11 +152,48 @@ export interface NormalizedSignal {
   evidence: Evidence;
 }
 
+/**
+ * §5 — light-touch entity extraction.
+ *
+ * Picks the first capitalised multi-character token from the snippet that is
+ * NOT the leading word of a sentence. This is intentionally a *very* light
+ * NER pass — its only goal is to surface the most prominent named entity
+ * (restaurant name, product, person) without dragging in a full NLP stack.
+ *
+ * Returns `undefined` when no obvious entity is found — callers should treat
+ * this as "no entity detected", not "entity is the empty string".
+ */
+export function extractEntity(snippet: string): string | undefined {
+  if (!snippet) return undefined;
+  // Look for capitalised tokens (2+ chars) that are NOT at position 0 of
+  // the snippet — i.e. likely proper nouns appearing mid-sentence.
+  const tokens = snippet.match(/\b([A-Z][a-zA-Z]{1,})\b/g);
+  if (!tokens || tokens.length === 0) return undefined;
+  // Skip common false-positives ("The", "This", "It", "We", "I", "A", etc.)
+  const SKIP = new Set([
+    'The', 'This', 'That', 'These', 'Those', 'It', 'We', 'I', 'You', 'They',
+    'He', 'She', 'His', 'Her', 'Our', 'Your', 'Their', 'A', 'An',
+    'In', 'On', 'At', 'By', 'For', 'Of', 'To', 'And', 'Or', 'But',
+    'What', 'When', 'Where', 'How', 'Why', 'Who',
+  ]);
+  for (const t of tokens) {
+    if (!SKIP.has(t)) return t;
+  }
+  return undefined;
+}
+
 export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): NormalizedSignal {
-  const ts = item.date || nowISO();
+  // observed_at = when the source event happened (publish time).
+  // timestamp   = when CHISMOSO captured the signal (set on the Signal below).
+  const observedAt = item.date || nowISO();
+  const ts = nowISO();
   const keyword = extractKeyword(item.snippet, ctx.keywordHint);
   const signalType = inferSignalType(item.snippet, item.sourceType);
   const conf = rawConfidence(item);
+  const entity = extractEntity(item.snippet);
+  const provenance = ctx.provenance ?? item.sourceType;
+
+  const evidenceId = generateId('ev');
 
   const signal: Signal = {
     id: generateId('sig'),
@@ -159,10 +202,13 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
     source: item.providerName,
     sourceType: item.sourceType,
     timestamp: ts,
+    observedAt,
     geography: ctx.geography,
     metric: 'mention_count',
     value: 1,
     normalizedValue: 1,
+    unit: 'mentions',
+    entity,
     direction: 'up',
     velocity: 0,
     confidence: conf,
@@ -171,19 +217,23 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
     metadata: item.rawMetadata ?? {},
     rawSnippet: item.snippet,
     url: item.url,
+    evidenceIds: [evidenceId],
   };
 
   const evidence: Evidence = {
-    id: generateId('ev'),
+    id: evidenceId,
     source: item.providerName,
     sourceType: item.sourceType,
     url: item.url,
-    observedAt: ts,
-    collectedAt: nowISO(),
+    observedAt,
+    collectedAt: ts,
     geographicScope: ctx.geography,
     topic: ctx.topic,
     rawValue: item.snippet,
     normalizedValue: normalizeText(item.snippet).slice(0, 500),
+    extractedFact: extractExtractedFact(item.snippet),
+    provenance,
+    verificationStatus: 'unverified',
     confidence: conf,
     evidenceType: TruthLevelFor(item.sourceType),
     metadata: { title: item.title, host: item.hostName, ...((item.rawMetadata as object) ?? {}) },
@@ -192,9 +242,27 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
   return { signal, evidence };
 }
 
+/**
+ * §8 — extract a short, factual statement from the raw snippet.
+ *
+ * Heuristic: take the first sentence (up to ~200 chars) and trim. This is
+ * distinct from `rawValue` which is the full snippet, and from
+ * `normalizedValue` which is the lowercased/sanitised form. The
+ * `extractedFact` represents "what specifically did this source say?"
+ */
+function extractExtractedFact(snippet: string): string | undefined {
+  if (!snippet) return undefined;
+  const trimmed = snippet.trim();
+  // First sentence or first 200 chars, whichever is shorter.
+  const sentenceEnd = trimmed.search(/[.!?]\s/);
+  const candidate = sentenceEnd > 0 ? trimmed.slice(0, sentenceEnd + 1) : trimmed;
+  return candidate.length > 200 ? candidate.slice(0, 197) + '...' : candidate;
+}
+
 function TruthLevelFor(st: SourceType): TruthLevel {
-  // Las señales observadas en una fuente real son OBSERVED.
-  // Las inferidas por el LLM (más adelante en el pipeline) serán INFERRED.
+  // Las señales observadas en una fuente real son OBSERVED por defecto.
+  // El cross-source step puede promover a VERIFIED o degradar a UNVERIFIED
+  // más adelante en el pipeline.
   return TL.OBSERVED;
 }
 

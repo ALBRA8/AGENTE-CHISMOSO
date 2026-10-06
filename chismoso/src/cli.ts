@@ -12,17 +12,21 @@
  *   chismoso watch [--init] [--interval=Ms] [--topic="..."]
  *   chismoso mesh <subcommand> [--agent=...] [--url=...] [--secret=...] [...]
  *   chismoso anomalies [--topic=...] [--watch] [--interval=Ms]
+ *   chismoso alerts <subcommand>                          Manage persisted alerts (IMP-4)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import * as nodeCrypto from 'node:crypto';
 import { ChismosoDB } from './db.js';
 import { Repositories } from './repositories.js';
 import { createDefaultProviderRegistry } from './providers/index.js';
+import { ProviderQualityTracker } from './providers/quality.js';
 import { createDefaultToolRegistry, LLMClient, Orchestrator, ReActOrchestrator } from './orchestrator/index.js';
 import { logger, setLogLevel, LogLevel } from './logger.js';
 import { resolveConfig, resolveOutputPath } from './config/index.js';
 import { generateId } from './models.js';
+import { SkillsCatalog, SkillStatus } from './skills/index.js';
 import {
   TopicScheduler,
   loadWatchConfig,
@@ -33,6 +37,14 @@ import {
 import { AgentMesh } from './mesh/index.js';
 import { autoPublishOpportunities } from './mesh/auto-publish.js';
 import { AnomalyDetector } from './anomaly/index.js';
+import {
+  AlertRepository,
+  AlertManager,
+  AlertStatus,
+  AlertSeverity,
+  AlertPriority,
+  type Alert,
+} from './alerts/index.js';
 import {
   loadMCPConfig,
   saveMCPConfig,
@@ -49,6 +61,20 @@ import {
   startStdioServer,
   redirectConsoleToStderr,
 } from './mcp/server.js';
+import { ChismosoDoctor } from './doctor/index.js';
+import { toConsole, toJSON, toMarkdown } from './doctor/report.js';
+import {
+  MemoryRepository,
+  MemoryStatus,
+  MemoryType,
+  type MemoryRecord,
+} from './memory/index.js';
+import { ExecutionTraceRepository } from './execution-trace/index.js';
+import {
+  FeedbackRepository,
+  FeedbackType,
+  type FeedbackTargetType,
+} from './feedback/index.js';
 
 const SCHEDULER_LOG_PATH = '/home/z/my-project/chismoso/data/scheduler.log';
 
@@ -65,10 +91,24 @@ async function main(): Promise<void> {
   }
 
   if (cmd === 'providers') {
+    const sub = args[1];
+    // `chismoso providers quality [--name=web_search]`
+    // `chismoso providers degraded`
+    if (sub === 'quality' || sub === 'degraded') {
+      return runProvidersQualityCommand(args, cfg);
+    }
     const reg = createDefaultProviderRegistry();
     const healths = await reg.allHealth();
     console.log(JSON.stringify({ providers: reg.list().map((p) => ({ ...p.capabilities(), health: healths[p.capabilities().name] })) }, null, 2));
     return;
+  }
+
+  if (cmd === 'auth') {
+    return runAuthCommand(args, cfg);
+  }
+
+  if (cmd === 'doctor') {
+    return runDoctorCommand(args, cfg);
   }
 
   if (cmd === 'history') {
@@ -287,8 +327,28 @@ async function main(): Promise<void> {
     return runAnomaliesCommand(args, cfg);
   }
 
+  if (cmd === 'alerts') {
+    return runAlertsCommand(args, cfg);
+  }
+
   if (cmd === 'mcp') {
     return runMCPCommand(args, cfg);
+  }
+
+  if (cmd === 'skills') {
+    return runSkillsCommand(args, cfg);
+  }
+
+  if (cmd === 'memory') {
+    return runMemoryCommand(args, cfg);
+  }
+
+  if (cmd === 'trace') {
+    return runTraceCommand(args, cfg);
+  }
+
+  if (cmd === 'feedback') {
+    return runFeedbackCommand(args, cfg);
   }
 
   console.error(`Unknown command: ${cmd}`);
@@ -359,18 +419,43 @@ Usage:
                                                   Run with the ReAct agentic loop (LLM-driven)
   chismoso demo                                   Run the canonical demo objective
   chismoso providers                              List providers and their health
+  chismoso providers quality [--name=web_search]  Show §10 provider quality metrics (all or one)
+  chismoso providers degraded                     List providers whose quality is degraded
+  chismoso auth token                             Generate a new auth token (plaintext + SHA-256 hash)
+  chismoso auth status                            Show whether auth is currently enabled
+  chismoso auth enable                            Enable auth in .env (CHISMOSO_AUTH_ENABLED=true)
+  chismoso auth disable                           Disable auth in .env (CHISMOSO_AUTH_ENABLED=false)
   chismoso history [--topic=<topic>]              Show trend history
   chismoso show <investigationId>                 Show a stored investigation
   chismoso watch [--init] [--interval=Ms] [--topic="..."]  Continuously re-investigate a watch list
   chismoso mesh <subcommand>                      Multi-agent mesh operations
   chismoso anomalies [--topic=...] [--watch] [--interval=Ms]  Detect statistical anomalies
+  chismoso doctor [--json] [--fix] [--check=<category>]  Run the 14-subsystem health audit (§31)
   chismoso mcp <subcommand>                       MCP server operations (serve, ...)
+
+Alert subcommands (Task IMP-4):
+  chismoso alerts list [--status=DETECTED] [--priority=P1] [--topic=...] [--limit=20]
+                                                  List persisted alerts (recently detected first)
+  chismoso alerts show <id>                      Show one alert by id
+  chismoso alerts ack <id> [--by=user]            Mark an alert ACKNOWLEDGED
+  chismoso alerts resolve <id> [--note="..."]    Mark an alert RESOLVED
+  chismoso alerts auto-resolve                    Auto-resolve SENT alerts whose anomaly has cleared
+  chismoso alerts stats                           Aggregate counts by status/severity/priority
 
 Anomaly subcommands:
   chismoso anomalies                       Detect across all topics, print JSON, exit
   chismoso anomalies --topic=<name>        Detect for a single topic only
   chismoso anomalies --watch                Poll continuously, print only NEW anomalies
   chismoso anomalies --watch --interval=300000  Poll every 5 minutes (ms)
+
+Memory subcommands (Task IMP-1):
+  chismoso memory list [--domain=...] [--type=...] [--status=...] [--topic=...] [--limit=N]
+                                                  List memories, most-relevant first
+  chismoso memory show <id>                       Show one memory by id (full record)
+  chismoso memory decay                            Manually trigger the temporal decay pass
+  chismoso memory stats                            Aggregate counts by domain / type / status
+  chismoso memory verify <id>                      Mark a memory VERIFIED (corroborating evidence)
+  chismoso memory archive <id>                     Archive a memory (status -> ARCHIVED)
 
 Mesh subcommands:
   chismoso mesh status                                   Show outbox/external_signals counts
@@ -398,6 +483,41 @@ MCP subcommands:
   chismoso mcp disconnect <name>          Disconnect and mark disabled
   chismoso mcp tools                       List tools from all connected servers
   chismoso mcp call <server.tool> <json>  Call a tool on a connected server
+
+Skills subcommands (spec §26, §27, §28):
+  chismoso skills list [--status=ACTIVE]   List skills (optionally filtered by status)
+  chismoso skills show <identity>          Show a single skill with recent invocations
+  chismoso skills seed                     Insert builtins if not present (idempotent)
+  chismoso skills validate <identity>      PROPOSED -> VALIDATING -> ACTIVE (two-step)
+  chismoso skills deprecate <identity>     ACTIVE -> DEPRECATED
+  chismoso skills retire <identity>        DEPRECATED -> RETIRED (terminal)
+  chismoso skills stats                    Aggregate success rates + invocation counts
+
+Trace subcommands (spec §30, Task IMP-5):
+  chismoso trace list [--task=investigate] [--status=success] [--limit=20]
+                                                  List recent execution traces
+  chismoso trace show <id>                  Show one execution trace by id
+  chismoso trace stats                       Aggregate counts by status/task + success_rate
+
+Feedback subcommands (spec §28, Task IMP-5):
+  chismoso feedback add --type=ALERT_USEFUL --target-type=alert --target-id=<id>
+                                                  Record operator feedback (single unit)
+                                                  [--note="..."] [--user-id=alice]
+  chismoso feedback list [--type=...] [--target-type=alert] [--target-id=<id>] [--limit=20]
+                                                  List recent feedback (most recent first)
+  chismoso feedback stats                    Aggregate useful_rate + counts by type/target
+
+Doctor subcommands (spec §31, Task IMP-3):
+  chismoso doctor                            Run all 14 subsystem checks, print colored summary
+  chismoso doctor --json                     Output the report as JSON only (for piping / API use)
+  chismoso doctor --fix                      Apply safe deterministic fixes (mkdir, CREATE TABLE)
+  chismoso doctor --check=<category>         Run a single check by category
+  chismoso doctor --check=providers --json   Single-check mode with JSON output
+
+  Doctor categories (case-insensitive, hyphens accepted):
+    providers, signal_ingestion, temporal_engine, embeddings,
+    semantic_search, anomaly_detection, trend_detection, memory,
+    scheduler, alerts, mcp, agent_runtime, database, configuration
 
 Environment:
   CHISMOSO_DB_PATH          SQLite path (default: data/chismoso.db)
@@ -819,6 +939,505 @@ function saveAnomalyState(pathStr: string, state: AnomalyState): void {
   } catch {
     /* state file is best-effort — never crash the watch loop on it */
   }
+}
+
+/**
+ * `chismoso doctor` — runs the 14-subsystem health audit (spec §31).
+ *
+ * Flags:
+ *   --json                 Output the report as JSON only (no console
+ *                          symbols / colors). Used by /api/doctor.
+ *   --fix                  Apply safe deterministic fixes (mkdir data/,
+ *                          CREATE TABLE IF NOT EXISTS signal_embeddings).
+ *   --check=<category>     Run only one check (case-insensitive, hyphens
+ *                          accepted). Valid categories: providers,
+ *                          signal_ingestion, temporal_engine, embeddings,
+ *                          semantic_search, anomaly_detection,
+ *                          trend_detection, memory, scheduler, alerts,
+ *                          mcp, agent_runtime, database, configuration.
+ *
+ * Without --check, runs all 14 checks in parallel and prints either the
+ * colored console summary (default) or the raw JSON (with --json).
+ *
+ * Exit codes:
+ *   0  — doctor ran successfully (regardless of overall_status)
+ *   1  — fatal error during doctor run
+ *   2  — bad flag (unknown --check category)
+ */
+async function runDoctorCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): Promise<void> {
+  const jsonOnly = args.includes('--json');
+  const applyFixes = args.includes('--fix');
+  const checkName = argValue(args, '--check');
+
+  // When emitting JSON, suppress INFO/WARN/DEBUG logs so they don't corrupt
+  // the JSON stream on stdout (the chismoso logger writes everything except
+  // ERROR to console.log → stdout). ERROR still goes to stderr so genuine
+  // failures are visible. This mirrors what the /api/doctor route does
+  // via the CHISMOSO_LOG_LEVEL=WARN env var, but goes one level stricter
+  // because we want CLEAN JSON on stdout for piping into jq / curl.
+  if (jsonOnly) setLogLevel(LogLevel.ERROR);
+
+  const doctor = new ChismosoDoctor({ dbPath: cfg.dbPath });
+  try {
+    if (checkName) {
+      // Single-check mode — useful for narrowing down a failing subsystem.
+      const check = await doctor.runOne(checkName, { applyFixes });
+      if (jsonOnly) {
+        console.log(JSON.stringify(check, null, 2));
+      } else {
+        const symbol = STATUS_SYMBOL_FOR[check.status] ?? '?';
+        console.log(`${symbol}  ${check.category.padEnd(20)}  ${check.message}  (${check.duration_ms}ms)`);
+        if (check.fix_applied) console.log('    [FIX APPLIED]');
+        if (check.details !== undefined) {
+          console.log('    details:', JSON.stringify(check.details, null, 2));
+        }
+      }
+      process.exit(0);
+      return;
+    }
+
+    // Full scan mode — run all 14 checks, print the aggregate report.
+    const report = await doctor.runAll({ applyFixes });
+    if (jsonOnly) {
+      // JSON to stdout — matches what /api/doctor parses.
+      console.log(toJSON(report));
+    } else {
+      // Colored console summary to stderr (so piping stdout to a file gets
+      // only the JSON when --json is used; without --json we still want
+      // the pretty report visible in the terminal).
+      console.error(toConsole(report));
+      console.error('');
+      console.error(`${ANSI_DIM}Full report (markdown):${ANSI_RESET}`);
+      console.error(toMarkdown(report));
+    }
+    process.exit(0);
+  } catch (e: any) {
+    console.error(`[chismoso] Doctor failed: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
+
+// ANSI dim/reset helpers for the doctor's stderr framing. Kept inline so
+// the file stays self-contained — these mirror the symbols in report.ts
+// but don't pull that module's helpers into the CLI surface.
+const STATUS_SYMBOL_FOR: Record<string, string> = {
+  OK: '\u2705',
+  DEGRADED: '\u26A0\uFE0F',
+  FAIL: '\u274C',
+  UNKNOWN: '\u2753',
+};
+const ANSI_RESET = '\x1b[0m';
+const ANSI_DIM = '\x1b[2m';
+
+// ---------------------------------------------------------------------------
+// ALERTS (Task IMP-4, spec §20)
+// ---------------------------------------------------------------------------
+//
+// `chismoso alerts <subcommand>` operates on the persisted `alerts` table.
+// Each row is a managed alert derived from an Anomaly. The lifecycle is
+// DETECTED → SENT → ACKNOWLEDGED → RESOLVED; SUPPRESSED is a transient
+// result of `AlertManager.emit()` when cooldown is active (never persisted).
+//
+// Subcommands:
+//   list [--status=...] [--priority=...] [--severity=...] [--topic=...] [--limit=N]
+//        Print alerts as JSON, most recent first. Filters are AND-combined.
+//   show <id>                  Print a single alert as JSON. Exit 3 if not found.
+//   ack <id> [--by=user]        Mark ACKNOWLEDGED (sets acknowledged_at + acknowledged_by).
+//   resolve <id> [--note="..."]  Mark RESOLVED (sets resolved_at + resolution_note).
+//   auto-resolve                Run the manager's autoResolve() against the current
+//                               detector output. SENT alerts whose anomaly is no
+//                               longer detected are moved to RESOLVED.
+//   stats                       Print aggregate counts by status / severity / priority.
+//
+// Exit codes:
+//   0  — success (may or may not have rows to print)
+//   1  — fatal error during the operation
+//   2  — bad usage (missing required arg)
+//   3  — id not found
+// ---------------------------------------------------------------------------
+
+function runAlertsCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1] ?? 'list';
+
+  if (sub === 'list') return runAlertsList(args, cfg);
+  if (sub === 'show') return runAlertsShow(args, cfg);
+  if (sub === 'ack') return runAlertsAck(args, cfg);
+  if (sub === 'resolve') return runAlertsResolve(args, cfg);
+  if (sub === 'auto-resolve') return runAlertsAutoResolve(args, cfg);
+  if (sub === 'stats') return runAlertsStats(args, cfg);
+
+  console.error(`Unknown alerts subcommand: ${sub}`);
+  console.error("Try: list, show, ack, resolve, auto-resolve, stats");
+  process.exit(2);
+}
+
+function parseAlertStatusArg(args: string[]): AlertStatus | undefined {
+  const v = argValue(args, '--status');
+  if (!v) return undefined;
+  const u = v.toUpperCase();
+  if (!Object.values(AlertStatus).includes(u as AlertStatus)) {
+    console.error(`Invalid --status="${v}". Valid values: ${Object.values(AlertStatus).join(', ')}`);
+    process.exit(2);
+  }
+  return u as AlertStatus;
+}
+
+function parseAlertPriorityArg(args: string[]): AlertPriority | undefined {
+  const v = argValue(args, '--priority');
+  if (!v) return undefined;
+  const u = v.toUpperCase();
+  if (!Object.values(AlertPriority).includes(u as AlertPriority)) {
+    console.error(`Invalid --priority="${v}". Valid values: ${Object.values(AlertPriority).join(', ')}`);
+    process.exit(2);
+  }
+  return u as AlertPriority;
+}
+
+function parseAlertSeverityArg(args: string[]): AlertSeverity | undefined {
+  const v = argValue(args, '--severity');
+  if (!v) return undefined;
+  const u = v.toUpperCase();
+  if (!Object.values(AlertSeverity).includes(u as AlertSeverity)) {
+    console.error(`Invalid --severity="${v}". Valid values: ${Object.values(AlertSeverity).join(', ')}`);
+    process.exit(2);
+  }
+  return u as AlertSeverity;
+}
+
+function runAlertsList(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const status = parseAlertStatusArg(args);
+  const priority = parseAlertPriorityArg(args);
+  const severity = parseAlertSeverityArg(args);
+  const topic = argValue(args, '--topic');
+  const limit = argInt(args, '--limit') ?? 50;
+
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new AlertRepository(db);
+    const alerts = repo.list({ status, priority, severity, topic, limit });
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      count: alerts.length,
+      filters: { status: status ?? null, priority: priority ?? null, severity: severity ?? null, topic: topic ?? null, limit },
+      alerts,
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runAlertsShow(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id) {
+    console.error('Usage: chismoso alerts show <id>');
+    process.exit(2);
+  }
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new AlertRepository(db);
+    const alert = repo.findById(id);
+    if (!alert) {
+      console.error(`Alert ${id} not found.`);
+      process.exit(3);
+    }
+    console.log(JSON.stringify({ alert }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runAlertsAck(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id) {
+    console.error('Usage: chismoso alerts ack <id> [--by=user]');
+    process.exit(2);
+  }
+  const by = argValue(args, '--by') ?? 'user';
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new AlertRepository(db);
+    const alert = repo.findById(id);
+    if (!alert) {
+      console.error(`Alert ${id} not found.`);
+      process.exit(3);
+    }
+    repo.acknowledge(id, by);
+    const updated = repo.findById(id)!;
+    console.log(JSON.stringify({ ok: true, alert: updated }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runAlertsResolve(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id) {
+    console.error('Usage: chismoso alerts resolve <id> [--note="..."]');
+    process.exit(2);
+  }
+  const note = argValue(args, '--note') ?? 'resolved via CLI';
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new AlertRepository(db);
+    const alert = repo.findById(id);
+    if (!alert) {
+      console.error(`Alert ${id} not found.`);
+      process.exit(3);
+    }
+    repo.resolve(id, note);
+    const updated = repo.findById(id)!;
+    console.log(JSON.stringify({ ok: true, alert: updated }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runAlertsAutoResolve(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const cooldownMinutes = argInt(args, '--cooldown-minutes') ?? 60;
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repos = new Repositories(db);
+    const alertRepo = new AlertRepository(db);
+    const manager = new AlertManager(alertRepo, { cooldownMinutes });
+    // Use a detector WITHOUT an AlertManager wired in to avoid creating new
+    // alerts during the auto-resolve scan — autoResolve only needs the set
+    // of currently-detected anomaly keys.
+    const detector = new AnomalyDetector(repos);
+    const result = manager.autoResolve(detector);
+    console.log(JSON.stringify({
+      ok: true,
+      resolved: result.resolved,
+      ranAt: new Date().toISOString(),
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runAlertsStats(_args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new AlertRepository(db);
+    const stats = repo.stats();
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      ...stats,
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// `chismoso memory <subcommand>` — MemoryDV operations (Task IMP-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * MemoryDV CLI (spec §12-§15). Subcommands:
+ *   list [--domain=...] [--type=...] [--status=...] [--topic=...] [--limit=N]
+ *        List memories, most-relevant first.
+ *   show <id>
+ *        Show one memory by id.
+ *   decay
+ *        Manually trigger the temporal decay pass.
+ *   stats
+ *        Aggregate counts by domain / type / status.
+ *   verify <id>
+ *        Manually mark a memory VERIFIED (corroborating evidence arrived).
+ *   archive <id>
+ *        Manually archive a memory (status → ARCHIVED).
+ *
+ * All subcommands open the DB read-write and close it before exit so
+ * better-sqlite3's native destructor doesn't race with process teardown.
+ */
+function runMemoryCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1] ?? 'list';
+  if (sub === 'list') return runMemoryList(args, cfg);
+  if (sub === 'show') return runMemoryShow(args, cfg);
+  if (sub === 'decay') return runMemoryDecay(args, cfg);
+  if (sub === 'stats') return runMemoryStats(args, cfg);
+  if (sub === 'verify') return runMemoryVerify(args, cfg);
+  if (sub === 'archive') return runMemoryArchive(args, cfg);
+  console.error(`Unknown memory subcommand: ${sub}`);
+  console.error("Try: list, show, decay, stats, verify, archive");
+  process.exit(2);
+}
+
+function parseMemoryTypeArg(args: string[]): MemoryType | undefined {
+  const v = argValue(args, '--type');
+  if (!v) return undefined;
+  const u = v.toUpperCase();
+  if (!Object.values(MemoryType).includes(u as MemoryType)) {
+    console.error(`Invalid --type="${v}". Valid: ${Object.values(MemoryType).join(', ')}`);
+    process.exit(2);
+  }
+  return u as MemoryType;
+}
+
+function parseMemoryStatusArg(args: string[]): MemoryStatus | undefined {
+  const v = argValue(args, '--status');
+  if (!v) return undefined;
+  const u = v.toUpperCase();
+  if (!Object.values(MemoryStatus).includes(u as MemoryStatus)) {
+    console.error(`Invalid --status="${v}". Valid: ${Object.values(MemoryStatus).join(', ')}`);
+    process.exit(2);
+  }
+  return u as MemoryStatus;
+}
+
+function summarize(m: MemoryRecord): Record<string, unknown> {
+  return {
+    id: m.id,
+    domain: m.domain,
+    type: m.type,
+    status: m.status,
+    truth_level: m.truth_level,
+    confidence: m.confidence,
+    relevance: m.relevance,
+    utility: m.utility,
+    scope: m.scope,
+    related_topic: m.related_topic ?? null,
+    content: m.content.length > 140 ? m.content.slice(0, 137) + '...' : m.content,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+    last_verified: m.last_verified,
+  };
+}
+
+function runMemoryList(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const domain = argValue(args, '--domain');
+  const type = parseMemoryTypeArg(args);
+  const status = parseMemoryStatusArg(args);
+  const topic = argValue(args, '--topic');
+  const limit = argInt(args, '--limit') ?? 20;
+
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new MemoryRepository(db);
+    const memories = repo.list({ domain, type, status, topic, limit });
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      count: memories.length,
+      filters: { domain: domain ?? null, type: type ?? null, status: status ?? null, topic: topic ?? null, limit },
+      memories: memories.map(summarize),
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runMemoryShow(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id) {
+    console.error('Missing memory id. Usage: chismoso memory show <id>');
+    process.exit(2);
+  }
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new MemoryRepository(db);
+    const mem = repo.findById(id);
+    if (!mem) {
+      console.error(`Memory ${id} not found`);
+      process.exit(3);
+    }
+    console.log(JSON.stringify(mem, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runMemoryDecay(_args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new MemoryRepository(db);
+    const result = repo.applyDecay();
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      ...result,
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runMemoryStats(_args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new MemoryRepository(db);
+    const stats = repo.stats();
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      ...stats,
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runMemoryVerify(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id) {
+    console.error('Missing memory id. Usage: chismoso memory verify <id>');
+    process.exit(2);
+  }
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new MemoryRepository(db);
+    const before = repo.findById(id);
+    if (!before) {
+      console.error(`Memory ${id} not found`);
+      process.exit(3);
+    }
+    repo.verify(id);
+    const after = repo.findById(id);
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      id,
+      before: { truth_level: before.truth_level, last_verified: before.last_verified },
+      after: { truth_level: after?.truth_level, last_verified: after?.last_verified },
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
+}
+
+function runMemoryArchive(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id) {
+    console.error('Missing memory id. Usage: chismoso memory archive <id>');
+    process.exit(2);
+  }
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const repo = new MemoryRepository(db);
+    const before = repo.findById(id);
+    if (!before) {
+      console.error(`Memory ${id} not found`);
+      process.exit(3);
+    }
+    repo.archive(id);
+    const after = repo.findById(id);
+    console.log(JSON.stringify({
+      ranAt: new Date().toISOString(),
+      id,
+      before: { status: before.status },
+      after: { status: after?.status },
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+  process.exit(0);
 }
 
 /**
@@ -1291,6 +1910,597 @@ async function runMCPCallTool(args: string[]): Promise<void> {
   // Tear down the spawned subprocess so we don't leak it.
   try { await mcpRegistry.disconnect(serverName); } catch { /* best-effort */ }
   process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// SKILLS COMMAND (spec §26, §27, §28)
+// ---------------------------------------------------------------------------
+//
+// Skills are reusable, versioned, measurable capabilities. Each lives a
+// lifecycle:
+//
+//   PROPOSED → VALIDATING → ACTIVE → DEPRECATED → RETIRED
+//
+// Transitions are guarded by the repository (`isAllowedTransition`) — the
+// CLI just dispatches. The `seed` subcommand inserts the 8 builtins
+// (signal_discovery, temporal_analysis, trend_detection, anomaly_analysis,
+// evidence_validation, opportunity_detection, alert_prioritization,
+// source_evaluation) if they're not already present.
+//
+// All subcommands open a short-lived ChismosoDB connection, do their work,
+// print JSON to stdout, then close + exit(0). The exit is explicit so the
+// better-sqlite3 native destructor can't segfault at process teardown.
+// ---------------------------------------------------------------------------
+
+/**
+ * `chismoso skills <subcommand>` — Skills catalog operations.
+ *
+ * Subcommands:
+ *   list [--status=ACTIVE]   List skills (optionally filtered by status)
+ *   show <identity>          Show one skill with the 20 most recent invocations
+ *   seed                     Insert builtins if not present (idempotent)
+ *   validate <identity>      PROPOSED → VALIDATING → ACTIVE (two-step transition)
+ *   deprecate <identity>     ACTIVE → DEPRECATED
+ *   retire <identity>        DEPRECATED → RETIRED (terminal)
+ *   stats                    Aggregate success rates + invocation counts
+ */
+function runSkillsCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1] ?? 'list';
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const catalog = new SkillsCatalog(db);
+
+    if (sub === 'list') {
+      const statusArg = argValue(args, '--status');
+      const filter: { status?: SkillStatus; origin?: string } = {};
+      if (statusArg) {
+        const upper = statusArg.toUpperCase();
+        if (!Object.values(SkillStatus).includes(upper as SkillStatus)) {
+          console.error(`[chismoso] Invalid --status value: ${statusArg}. ` +
+            `Valid: ${Object.values(SkillStatus).join(', ')}`);
+          process.exit(2);
+        }
+        filter.status = upper as SkillStatus;
+      }
+      const originArg = argValue(args, '--origin');
+      if (originArg) filter.origin = originArg;
+      const skills = catalog.list(filter);
+      console.log(JSON.stringify({
+        count: skills.length,
+        filter,
+        skills: skills.map(summarizeSkill),
+      }, null, 2));
+      return;
+    }
+
+    if (sub === 'show') {
+      const identity = args[2];
+      if (!identity) {
+        console.error('Usage: chismoso skills show <identity>');
+        process.exit(2);
+      }
+      const skill = catalog.findByIdentity(identity) ?? catalog.findById(identity);
+      if (!skill) {
+        console.error(`[chismoso] Skill not found: ${identity}`);
+        process.exit(3);
+      }
+      const invocations = catalog.recentInvocations(skill.id, 20);
+      console.log(JSON.stringify({ skill, recentInvocations: invocations }, null, 2));
+      return;
+    }
+
+    if (sub === 'seed') {
+      const inserted = catalog.seedBuiltins();
+      const all = catalog.list();
+      console.log(JSON.stringify({
+        ok: true,
+        inserted,
+        total: all.length,
+        active: all.filter((s) => s.status === SkillStatus.ACTIVE).length,
+        identities: all.map((s) => s.identity),
+      }, null, 2));
+      return;
+    }
+
+    if (sub === 'validate') {
+      const identity = args[2];
+      if (!identity) {
+        console.error('Usage: chismoso skills validate <identity>');
+        process.exit(2);
+      }
+      try {
+        const skill = catalog.validate(identity);
+        console.log(JSON.stringify({ ok: true, skill: summarizeSkill(skill) }, null, 2));
+      } catch (e: any) {
+        console.error(`[chismoso] validate failed: ${e?.message ?? e}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (sub === 'deprecate') {
+      const identity = args[2];
+      if (!identity) {
+        console.error('Usage: chismoso skills deprecate <identity>');
+        process.exit(2);
+      }
+      try {
+        const skill = catalog.deprecate(identity);
+        console.log(JSON.stringify({ ok: true, skill: summarizeSkill(skill) }, null, 2));
+      } catch (e: any) {
+        console.error(`[chismoso] deprecate failed: ${e?.message ?? e}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (sub === 'retire') {
+      const identity = args[2];
+      if (!identity) {
+        console.error('Usage: chismoso skills retire <identity>');
+        process.exit(2);
+      }
+      try {
+        const skill = catalog.retire(identity);
+        console.log(JSON.stringify({ ok: true, skill: summarizeSkill(skill) }, null, 2));
+      } catch (e: any) {
+        console.error(`[chismoso] retire failed: ${e?.message ?? e}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (sub === 'stats') {
+      const all = catalog.list();
+      const totals = all.reduce(
+        (acc, s) => {
+          acc.invocations += s.invocations;
+          acc.successes += s.successes;
+          acc.failures += s.failures;
+          return acc;
+        },
+        { invocations: 0, successes: 0, failures: 0 },
+      );
+      console.log(JSON.stringify({
+        total: all.length,
+        byStatus: Object.values(SkillStatus).map((st) => ({
+          status: st,
+          count: all.filter((s) => s.status === st).length,
+        })),
+        totals,
+        overallSuccessRate: totals.invocations > 0
+          ? Number((totals.successes / totals.invocations).toFixed(4))
+          : 0,
+        skills: all.map((s) => ({
+          identity: s.identity,
+          status: s.status,
+          version: s.version,
+          invocations: s.invocations,
+          successes: s.successes,
+          failures: s.failures,
+          success_rate: s.success_rate,
+          confidence: s.confidence,
+          last_validated: s.last_validated,
+        })),
+      }, null, 2));
+      return;
+    }
+
+    console.error(`Unknown skills subcommand: ${sub}`);
+    console.error('Try: list, show, seed, validate, deprecate, retire, stats');
+    process.exit(2);
+  } finally {
+    db.close();
+    // Exit explicitly to avoid better-sqlite3 native destructor crash at exit.
+    // The list/show/stats subcommands do NOT need to exit (they're
+    // fire-and-forget reads) — but the lifecycle verbs (seed/validate/
+    // deprecate/retire) mutate state and we want a clean teardown.
+    if (['seed', 'validate', 'deprecate', 'retire'].includes(args[1] ?? '')) {
+      process.exit(0);
+    }
+  }
+}
+
+/**
+ * Compact view of a skill for list/stats output — drops the long prose
+ * fields (procedure, evidence, pitfalls, verification) so the JSON stays
+ * scannable. Use `chismoso skills show <identity>` for the full record.
+ */
+function summarizeSkill(s: {
+  id: string;
+  identity: string;
+  purpose: string;
+  version: string;
+  status: SkillStatus;
+  origin: string;
+  confidence: number;
+  success_rate: number;
+  invocations: number;
+  successes: number;
+  failures: number;
+  last_validated: string | null;
+  updated_at: string;
+}): {
+  id: string;
+  identity: string;
+  purpose: string;
+  version: string;
+  status: SkillStatus;
+  origin: string;
+  confidence: number;
+  success_rate: number;
+  invocations: number;
+  successes: number;
+  failures: number;
+  last_validated: string | null;
+  updated_at: string;
+} {
+  return {
+    id: s.id,
+    identity: s.identity,
+    purpose: s.purpose,
+    version: s.version,
+    status: s.status,
+    origin: s.origin,
+    confidence: s.confidence,
+    success_rate: s.success_rate,
+    invocations: s.invocations,
+    successes: s.successes,
+    failures: s.failures,
+    last_validated: s.last_validated,
+    updated_at: s.updated_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// §10 PROVIDER QUALITY subcommands (Task IMP-6)
+// ---------------------------------------------------------------------------
+
+/**
+ * `chismoso providers quality [--name=web_search]`
+ * `chismoso providers degraded`
+ *
+ * Surfaces the per-provider quality metrics maintained by
+ * `ProviderQualityTracker` (spec §10, audit B findings). Without
+ * these commands, operators could only inspect per-call audit data by
+ * hand-writing SQL against the `provider_runs` table.
+ */
+function runProvidersQualityCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1]; // 'quality' | 'degraded'
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const tracker = new ProviderQualityTracker(db);
+    if (sub === 'degraded') {
+      const degraded = tracker.detectDegraded();
+      if (degraded.length === 0) {
+        console.log(JSON.stringify({ degraded: [], count: 0, note: 'No degraded providers detected.' }, null, 2));
+      } else {
+        console.log(JSON.stringify({ degraded, count: degraded.length }, null, 2));
+      }
+      return;
+    }
+
+    // 'quality'
+    const name = argValue(args, '--name');
+    if (name) {
+      const m = tracker.getMetrics(name);
+      if (!m) {
+        console.error(`[chismoso] No quality metrics recorded for provider "${name}".`);
+        console.error('[chismoso] Run an investigation first so the tracker can record calls.');
+        process.exit(3);
+      }
+      console.log(JSON.stringify(m, null, 2));
+      return;
+    }
+    const all = tracker.getAllMetrics();
+    if (all.length === 0) {
+      console.log(JSON.stringify({
+        providers: [],
+        count: 0,
+        note: 'No provider quality metrics recorded yet. Run an investigation first.',
+      }, null, 2));
+      return;
+    }
+    console.log(JSON.stringify({ providers: all, count: all.length }, null, 2));
+  } finally {
+    db.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// §34 AUTH subcommands (Task IMP-6)
+// ---------------------------------------------------------------------------
+
+/**
+ * `chismoso auth token`     — generate a fresh random token + its SHA-256 hash.
+ * `chismoso auth status`    — show whether auth is currently enabled.
+ * `chismoso auth enable`    — set CHISMOSO_AUTH_ENABLED=true in .env.
+ * `chismoso auth disable`   — set CHISMOSO_AUTH_ENABLED=false in .env.
+ *
+ * The auth check itself lives in `src/lib/auth.ts` (Next.js side). These
+ * CLI commands exist so operators can provision tokens and flip the
+ * enabled flag without manually editing .env.
+ */
+function runAuthCommand(args: string[], _cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1] ?? 'status';
+
+  if (sub === 'token') {
+    const { token, hash } = generateAuthToken();
+    console.log(JSON.stringify({
+      token,
+      hash,
+      header: process.env.CHISMOSO_AUTH_HEADER ?? 'X-Chismoso-Agent',
+      instructions: [
+        '1. Hand the plaintext `token` to the agent client (it will send it in the `X-Chismoso-Agent` header).',
+        '2. Append the `hash` to CHISMOSO_AUTH_TOKENS in .env (comma-separated if multiple tokens):',
+        `   CHISMOSO_AUTH_TOKENS=${hash}`,
+        '3. Enable auth in .env:',
+        '   CHISMOSO_AUTH_ENABLED=true',
+        '4. Restart the Next.js dev server for the env change to take effect.',
+      ],
+    }, null, 2));
+    return;
+  }
+
+  if (sub === 'status') {
+    const enabled = process.env.CHISMOSO_AUTH_ENABLED === 'true';
+    const header = process.env.CHISMOSO_AUTH_HEADER ?? 'X-Chismoso-Agent';
+    const tokensConfigured = (process.env.CHISMOSO_AUTH_TOKENS ?? '')
+      .split(',').map((t) => t.trim()).filter((t) => t.length > 0).length;
+    console.log(JSON.stringify({
+      enabled,
+      header,
+      tokens_configured: tokensConfigured,
+      env_var: 'CHISMOSO_AUTH_ENABLED',
+      note: enabled && tokensConfigured === 0
+        ? 'Auth is ENABLED but no tokens are configured — all requests will be rejected.'
+        : undefined,
+    }, null, 2));
+    return;
+  }
+
+  if (sub === 'enable' || sub === 'disable') {
+    const newValue = sub === 'enable' ? 'true' : 'false';
+    const envPath = resolveEnvPath();
+    try {
+      upsertEnvVar(envPath, 'CHISMOSO_AUTH_ENABLED', newValue);
+      console.log(JSON.stringify({
+        ok: true,
+        env_path: envPath,
+        CHISMOSO_AUTH_ENABLED: newValue,
+        note: sub === 'enable'
+          ? 'Auth is now enabled. Restart the Next.js dev server for the change to take effect.'
+          : 'Auth is now disabled. Restart the Next.js dev server for the change to take effect.',
+      }, null, 2));
+    } catch (e: any) {
+      console.error(`[chismoso] Failed to update .env: ${e?.message ?? e}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  console.error(`Unknown auth subcommand: ${sub}`);
+  console.error("Try 'chismoso auth token', 'chismoso auth status', 'chismoso auth enable', or 'chismoso auth disable'.");
+  process.exit(2);
+}
+
+/**
+ * Resolves the .env path. Prefers the Next.js project root .env, falls
+ * back to the chismoso/ subdir .env (which is where chismoso-specific
+ * vars typically live in dev).
+ */
+function resolveEnvPath(): string {
+  const candidates = [
+    '/home/z/my-project/.env',
+    '/home/z/my-project/chismoso/.env',
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  // Default to the Next.js root .env (will be created on first write).
+  return '/home/z/my-project/.env';
+}
+
+/**
+ * Upserts a single KEY=VALUE line in the given .env file. Preserves all
+ * other lines, comments, and ordering. If the key doesn't exist, it's
+ * appended. If it does, the value is replaced in place. The file is
+ * created if it doesn't exist.
+ */
+function upsertEnvVar(envPath: string, key: string, value: string): void {
+  let lines: string[] = [];
+  if (existsSync(envPath)) {
+    const raw = readFileSync(envPath, 'utf-8');
+    lines = raw.split('\n');
+  }
+  let replaced = false;
+  const prefix = `${key}=`;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith(prefix) || lines[i].startsWith(`# ${prefix}`)) {
+      lines[i] = `${key}=${value}`;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) {
+    if (lines.length > 0 && lines[lines.length - 1] !== '' && lines[lines.length - 1] !== '\n') {
+      lines.push('');
+    }
+    lines.push(`${key}=${value}`);
+  }
+  writeFileSync(envPath, lines.join('\n'), { mode: 0o600 });
+}
+
+/**
+ * Generates a fresh random token (32 bytes, URL-safe base64) and its
+ * SHA-256 hex hash. Mirrors the implementation in `src/lib/auth.ts` so
+ * CLI-generated tokens are accepted by the auth middleware without
+ * translation.
+ */
+function generateAuthToken(): { token: string; hash: string } {
+  // Use Node's `node:crypto` module directly via ES import (not `require`)
+  // so the auth-token command works in the compiled ESM dist build.
+  // `randomFillSync` and `createHash` are both stable across Node 18+.
+  const crypto = nodeCrypto;
+  const bytes = crypto.randomFillSync(Buffer.alloc(32));
+  // Convert to URL-safe base64.
+  const token = bytes.toString('base64url');
+  const hash = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+  return { token, hash };
+}
+
+// ---------------------------------------------------------------------------
+// Task IMP-5 — Execution Trace + Feedback CLI commands
+// (spec §28, §30 — see chismoso/src/execution-trace/ and chismoso/src/feedback/)
+// ---------------------------------------------------------------------------
+
+/**
+ * `chismoso trace <subcommand>` — list / show / stats over execution_traces.
+ *
+ * Trace rows are written by the orchestrator (orchestrator.ts + react.ts) at
+ * the start (status='running') and end (status='success' | 'failure') of
+ * every investigation. They give a unified audit view across investigation,
+ * ReAct, MCP, and skill-invocation execution shapes.
+ */
+function runTraceCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1] ?? 'list';
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  const repo = new ExecutionTraceRepository(db);
+  try {
+    if (sub === 'list') {
+      const task = argValue(args, '--task');
+      const status = argValue(args, '--status');
+      const limit = argInt(args, '--limit') ?? 20;
+      const traces = repo.list({
+        task,
+        status: status as any,
+        limit,
+      });
+      const summary = traces.map((t) => ({
+        id: t.id,
+        task: t.task,
+        status: t.status,
+        start_time: t.start_time,
+        duration_ms: t.duration_ms,
+        tools_used_count: t.tools_used.length,
+        errors_count: t.errors.length,
+        related_investigation_id: t.related_investigation_id,
+      }));
+      console.log(JSON.stringify({
+        count: summary.length,
+        traces: summary,
+      }, null, 2));
+      return;
+    }
+
+    if (sub === 'show') {
+      const id = args[2];
+      if (!id) {
+        console.error('Usage: chismoso trace show <id>');
+        process.exit(2);
+      }
+      const trace = repo.findById(id);
+      if (!trace) {
+        console.error(`Trace ${id} not found`);
+        process.exit(3);
+      }
+      console.log(JSON.stringify(trace, null, 2));
+      return;
+    }
+
+    if (sub === 'stats') {
+      const stats = repo.stats();
+      console.log(JSON.stringify(stats, null, 2));
+      return;
+    }
+
+    console.error(`Unknown trace subcommand: ${sub}`);
+    console.error('Available: list, show, stats');
+    process.exit(2);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `chismoso feedback <subcommand>` — add / list / stats over feedback rows.
+ *
+ * Feedback is the operator's signal back to CHISMOSO about the quality of
+ * what it produced (spec §28). Without it, the agent has no learning loop:
+ * anomalies are emitted but never confirmed/rejected; opportunities are
+ * scored but never marked useful/irrelevant.
+ */
+function runFeedbackCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): void {
+  const sub = args[1] ?? 'list';
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  const repo = new FeedbackRepository(db);
+  try {
+    if (sub === 'add') {
+      const type = argValue(args, '--type') as FeedbackType | undefined;
+      const targetType = argValue(args, '--target-type') as FeedbackTargetType | undefined;
+      const targetId = argValue(args, '--target-id');
+      const note = argValue(args, '--note');
+      const userId = argValue(args, '--user-id');
+      if (!type || !targetType || !targetId) {
+        console.error('Usage: chismoso feedback add --type=ALERT_USEFUL --target-type=alert --target-id=<id> [--note="..."] [--user-id=alice]');
+        console.error(`Valid types: ${Object.values(FeedbackType).join(', ')}`);
+        console.error('Valid target-types: alert, trend, opportunity, signal, memory, skill');
+        process.exit(2);
+      }
+      if (!Object.values(FeedbackType).includes(type)) {
+        console.error(`Invalid type: ${type}`);
+        console.error(`Valid types: ${Object.values(FeedbackType).join(', ')}`);
+        process.exit(2);
+      }
+      const validTargets: FeedbackTargetType[] = ['alert', 'trend', 'opportunity', 'signal', 'memory', 'skill'];
+      if (!validTargets.includes(targetType)) {
+        console.error(`Invalid target-type: ${targetType}`);
+        console.error(`Valid target-types: ${validTargets.join(', ')}`);
+        process.exit(2);
+      }
+      const fb = repo.insert({
+        type,
+        target_type: targetType,
+        target_id: targetId,
+        note,
+        user_id: userId,
+      });
+      console.log(JSON.stringify(fb, null, 2));
+      return;
+    }
+
+    if (sub === 'list') {
+      const type = argValue(args, '--type') as FeedbackType | undefined;
+      const targetType = argValue(args, '--target-type') as FeedbackTargetType | undefined;
+      const targetId = argValue(args, '--target-id');
+      const userId = argValue(args, '--user-id');
+      const limit = argInt(args, '--limit') ?? 20;
+      const items = repo.list({
+        type,
+        target_type: targetType,
+        target_id: targetId,
+        user_id: userId,
+        limit,
+      });
+      console.log(JSON.stringify({
+        count: items.length,
+        feedback: items,
+      }, null, 2));
+      return;
+    }
+
+    if (sub === 'stats') {
+      const stats = repo.stats();
+      console.log(JSON.stringify(stats, null, 2));
+      return;
+    }
+
+    console.error(`Unknown feedback subcommand: ${sub}`);
+    console.error('Available: add, list, stats');
+    process.exit(2);
+  } finally {
+    db.close();
+  }
 }
 
 main().catch((e) => {

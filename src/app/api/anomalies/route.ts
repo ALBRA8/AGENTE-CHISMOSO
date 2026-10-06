@@ -5,6 +5,7 @@ import {
   type AnomalyDetectorConfig,
   DEFAULT_ANOMALY_CONFIG,
 } from '@/lib/anomaly-detector';
+import { emitAlertsForAnomalies } from '@/lib/alerts-server';
 import { apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
@@ -14,19 +15,31 @@ export const dynamic = 'force-dynamic';
  * GET /api/anomalies
  *
  * Returns all anomalies currently detectable from the chismoso
- * `topic_observations` history. The detector is read-only and side-effect-free.
+ * `topic_observations` history. The detector itself is read-only with
+ * respect to topic_observations / signals — but as of Task IMP-4 (spec
+ * §20), each detected anomaly is ALSO emitted as an Alert via the
+ * `AlertManager` (idempotent: re-emits within cooldown are SUPPRESSED).
+ *
+ * This is the entry point that keeps the `alerts` table populated as
+ * anomalies fire. The dashboard polls /api/anomalies on a 30s cycle;
+ * each poll re-runs detection and emits any new alerts that have
+ * appeared since the previous cycle.
  *
  * Query params:
  *   ?topic=<name>      Restrict detection to a single topic.
  *   ?minSamples=N      Override min-samples threshold (default 5).
  *   ?zscoreThreshold=F Override z-score threshold (default 2.0).
+ *   ?emitAlerts=0      Skip the alert-emit side effect (read-only poll).
  *
  * Response shape:
  *   {
  *     ranAt: string (ISO),
  *     topic: string | null,
  *     count: number,
- *     anomalies: Anomaly[]
+ *     anomalies: Anomaly[],
+ *     config: AnomalyDetectorConfig,
+ *     alertsEmitted: number,    // NEW: count of alerts persisted this call
+ *     alertsSuppressed: number  // NEW: count of emits suppressed by cooldown
  *   }
  *
  * Anomaly shape:
@@ -44,6 +57,7 @@ export async function GET(req: NextRequest) {
   const topic = url.searchParams.get('topic');
   const minSamplesArg = parseInt(url.searchParams.get('minSamples') ?? '', 10);
   const zscoreThresholdArg = parseFloat(url.searchParams.get('zscoreThreshold') ?? '');
+  const emitAlerts = (url.searchParams.get('emitAlerts') ?? '1') !== '0';
 
   const config: Partial<AnomalyDetectorConfig> = {};
   if (Number.isFinite(minSamplesArg) && minSamplesArg > 0) {
@@ -55,12 +69,25 @@ export async function GET(req: NextRequest) {
 
   try {
     const anomalies: Anomaly[] = detectAnomalies(topic, config);
+
+    let alertsEmitted = 0;
+    let alertsSuppressed = 0;
+    if (emitAlerts && anomalies.length > 0) {
+      // Emit a managed Alert for each detected anomaly. The manager handles
+      // dedup + cooldown — duplicates are silently SUPPRESSED.
+      const result = emitAlertsForAnomalies(anomalies);
+      alertsEmitted = result.emitted;
+      alertsSuppressed = result.suppressed;
+    }
+
     return apiOk({
       ranAt: new Date().toISOString(),
       topic,
       count: anomalies.length,
       anomalies,
       config: { ...DEFAULT_ANOMALY_CONFIG, ...config },
+      alertsEmitted,
+      alertsSuppressed,
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);

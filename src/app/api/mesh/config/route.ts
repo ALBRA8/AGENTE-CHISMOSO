@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { openMeshDb, getMeshConfig, setMeshConfig } from '../_mesh-db';
 import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
+import { authedPUT } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,8 +47,13 @@ export async function GET() {
  *
  * Body: `{ enabled: boolean, subscribers: Array<{ agentName, webhookUrl, secret?, eventsFilter? }> }`
  * Response: `{ enabled: boolean, subscribers: number }`
+ *
+ * §34 / audit C2 — Protected by `authedPUT`: this route reconfigures webhook
+ * subscribers (including the `webhook_url` that CHISMOSO will then call out
+ * to). Without auth, any caller could redirect webhook delivery to their own
+ * receiver and capture HMAC-signed opportunity payloads in real time.
  */
-export async function PUT(req: NextRequest) {
+export const PUT = authedPUT(async (req: NextRequest) => {
   let body: { enabled?: boolean; subscribers?: unknown };
   try {
     body = (await req.json()) as typeof body;
@@ -91,4 +97,4 @@ export async function PUT(req: NextRequest) {
       try { db.close(); } catch { /* ignore */ }
     }
   }
-}
+});

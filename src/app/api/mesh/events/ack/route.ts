@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { openMeshDb, ackEvents } from '../../_mesh-db';
 import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
+import { authedPOST } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,8 +14,12 @@ export const dynamic = 'force-dynamic';
  *
  * Body: `{ ids: string[] }`
  * Response: `{ acked: number }`
+ *
+ * §34 / audit C2 — Protected: mesh event acknowledgement mutates the outbox
+ * state, so anonymous callers should not be able to ACK events they did
+ * not receive.
  */
-export async function POST(req: NextRequest) {
+export const POST = authedPOST(async (req: NextRequest) => {
   let body: { ids?: string[] };
   try {
     body = (await req.json()) as { ids?: string[] };
@@ -38,4 +43,4 @@ export async function POST(req: NextRequest) {
       try { db.close(); } catch { /* ignore */ }
     }
   }
-}
+});

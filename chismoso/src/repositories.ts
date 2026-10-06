@@ -28,11 +28,11 @@ export class SignalRepository {
   insert(s: Signal, investigationId?: string): void {
     this.db.prepare(`
       INSERT INTO signals (
-        id, topic, keyword, source, source_type, timestamp, geography,
-        metric, value, normalized_value, direction, velocity, confidence,
-        evidence_type, signal_type, metadata_json, raw_snippet, url,
-        investigation_id, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        id, topic, keyword, source, source_type, timestamp, observed_at, geography,
+        metric, value, normalized_value, unit, entity, direction, velocity,
+        confidence, evidence_type, signal_type, metadata_json, raw_snippet, url,
+        evidence_ids_json, investigation_id, created_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       s.id,
       s.topic,
@@ -40,10 +40,13 @@ export class SignalRepository {
       s.source,
       s.sourceType,
       s.timestamp,
+      s.observedAt ?? null,
       s.geography,
       s.metric,
       String(s.value),
       s.normalizedValue,
+      s.unit ?? null,
+      s.entity ?? null,
       s.direction,
       s.velocity,
       s.confidence,
@@ -52,6 +55,7 @@ export class SignalRepository {
       JSON.stringify(s.metadata),
       s.rawSnippet,
       s.url ?? null,
+      s.evidenceIds ? JSON.stringify(s.evidenceIds) : null,
       investigationId ?? null,
       new Date().toISOString(),
     );
@@ -105,10 +109,13 @@ function parseSignalRow(r: any): Signal {
     source: r.source,
     sourceType: r.source_type,
     timestamp: r.timestamp,
+    observedAt: r.observed_at ?? undefined,
     geography: r.geography,
     metric: r.metric,
     value: r.value,
     normalizedValue: r.normalized_value,
+    unit: r.unit ?? undefined,
+    entity: r.entity ?? undefined,
     direction: r.direction,
     velocity: r.velocity,
     confidence: r.confidence,
@@ -117,6 +124,7 @@ function parseSignalRow(r: any): Signal {
     metadata: r.metadata_json ? JSON.parse(r.metadata_json) : {},
     rawSnippet: r.raw_snippet,
     url: r.url ?? undefined,
+    evidenceIds: r.evidence_ids_json ? JSON.parse(r.evidence_ids_json) : undefined,
   };
 }
 
@@ -131,9 +139,10 @@ export class EvidenceRepository {
     this.db.prepare(`
       INSERT INTO evidence (
         id, source, source_type, url, observed_at, collected_at,
-        geographic_scope, topic, raw_value, normalized_value,
-        confidence, evidence_type, metadata_json, investigation_id, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        geographic_scope, topic, raw_value, normalized_value, extracted_fact,
+        provenance, verification_status, confidence, evidence_type, metadata_json,
+        investigation_id, created_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       e.id,
       e.source,
@@ -145,6 +154,9 @@ export class EvidenceRepository {
       e.topic,
       e.rawValue,
       e.normalizedValue,
+      e.extractedFact ?? null,
+      e.provenance ?? null,
+      e.verificationStatus ?? 'unverified',
       e.confidence,
       e.evidenceType,
       JSON.stringify(e.metadata),
@@ -180,6 +192,9 @@ function parseEvidenceRow(r: any): Evidence {
     topic: r.topic,
     rawValue: r.raw_value,
     normalizedValue: r.normalized_value,
+    extractedFact: r.extracted_fact ?? undefined,
+    provenance: r.provenance ?? undefined,
+    verificationStatus: (r.verification_status ?? 'unverified') as Evidence['verificationStatus'],
     confidence: r.confidence,
     evidenceType: r.evidence_type,
     metadata: r.metadata_json ? JSON.parse(r.metadata_json) : {},
@@ -258,16 +273,18 @@ export class TrendRepository {
   insert(t: Trend, investigationId?: string): void {
     this.db.prepare(`
       INSERT INTO trends (
-        id, topic, description, state, confidence, sources_count, signals_count,
-        first_seen, last_seen, observation_count, growth, velocity, persistence,
-        cross_source_confirmation, score, score_breakdown_json, evidence_json,
-        signals_json, created_at, updated_at, investigation_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        id, topic, description, state, direction, confidence, sources_count,
+        signals_count, first_seen, last_seen, observation_count, growth,
+        velocity, persistence, cross_source_confirmation, score,
+        score_breakdown_json, evidence_json, signals_json, created_at,
+        updated_at, investigation_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       t.id,
       t.topic,
       t.description,
       t.state,
+      t.direction,
       t.confidence,
       t.sourcesCount,
       t.signalsCount,
@@ -310,6 +327,7 @@ function parseTrendRow(r: any): Trend {
     topic: r.topic,
     description: r.description,
     state: r.state,
+    direction: (r.direction ?? 'flat') as Trend['direction'],
     confidence: r.confidence,
     sourcesCount: r.sources_count,
     signalsCount: r.signals_count,
@@ -478,8 +496,8 @@ export class InvestigationRepository {
         id, query, scope, started_at, completed_at, status, providers_json,
         queries_json, signals_found, evidence_found, trends_found,
         problems_found, opportunities_found, errors_json, duration_ms,
-        iterations, budget_json, provider_runs_json
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        iterations, budget_json, provider_runs_json, execution_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       inv.id,
       inv.query,
@@ -499,6 +517,7 @@ export class InvestigationRepository {
       inv.iterations,
       JSON.stringify(inv.budget),
       JSON.stringify(inv.providerRuns),
+      inv.executionId ?? null,
     );
   }
 
@@ -508,7 +527,8 @@ export class InvestigationRepository {
         completed_at = ?, status = ?, providers_json = ?, queries_json = ?,
         signals_found = ?, evidence_found = ?, trends_found = ?,
         problems_found = ?, opportunities_found = ?, errors_json = ?,
-        duration_ms = ?, iterations = ?, provider_runs_json = ?
+        duration_ms = ?, iterations = ?, provider_runs_json = ?,
+        execution_id = COALESCE(?, execution_id)
       WHERE id = ?
     `).run(
       inv.completedAt ?? null,
@@ -524,6 +544,7 @@ export class InvestigationRepository {
       inv.durationMs ?? null,
       inv.iterations,
       JSON.stringify(inv.providerRuns),
+      inv.executionId ?? null,
       inv.id,
     );
   }
@@ -585,6 +606,7 @@ export class InvestigationRepository {
       iterations: r.iterations,
       budget: r.budget_json ? JSON.parse(r.budget_json) : ({} as any),
       providerRuns: r.provider_runs_json ? JSON.parse(r.provider_runs_json) : [],
+      executionId: r.execution_id ?? undefined,
     };
   }
 }

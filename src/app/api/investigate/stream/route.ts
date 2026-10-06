@@ -9,6 +9,7 @@ import {
   validateMaxQueries,
   validateMaxRuntimeMs,
 } from '@/lib/validation';
+import { authedPOST, authedRoute } from '@/lib/middleware';
 
 /**
  * SSE streaming endpoint for live investigation progress.
@@ -319,8 +320,14 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
 /**
  * POST /api/investigate/stream
  * Body: { objective, geography?, maxQueries?, maxRuntimeMs? }
+ *
+ * §34 / audit C2 — Protected by `authedPOST`: when `CHISMOSO_AUTH_ENABLED=true`,
+ * requests must carry a valid `X-Chismoso-Agent` header. The GET variant
+ * (used by the browser-native EventSource API) is left open in V1 because
+ * EventSource cannot send custom headers — operators who need to protect
+ * streaming should use POST-based fetch streaming instead.
  */
-export async function POST(req: NextRequest) {
+export const POST = authedPOST(async (req: NextRequest) => {
   // --- Rate limit (per-IP, 5/min) ---------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`stream:${ip}`, LIMITS.stream);
@@ -350,15 +357,22 @@ export async function POST(req: NextRequest) {
     return apiBadRequest(error ?? 'Invalid params');
   }
   return runInvestigationStream(params, req.signal);
-}
+});
 
 /**
  * GET /api/investigate/stream?objective=...&geography=...&maxQueries=N&maxRuntimeMs=N
  *
  * Exists so the browser-native EventSource API can connect (it can only do GET).
  * The React component InvestigationStream uses this.
+ *
+ * §34 / audit C2 — Protected by `authedRoute`: when `CHISMOSO_AUTH_ENABLED=true`,
+ * requests must carry a valid `X-Chismoso-Agent` header. The browser-native
+ * EventSource API cannot set custom headers itself — operators enabling auth
+ * must route through a proxy that injects the header, or use the POST variant
+ * which carries auth natively. When auth is disabled (the default for dev), GET
+ * is open.
  */
-export async function GET(req: NextRequest) {
+export const GET = authedRoute(async (req: NextRequest) => {
   // --- Rate limit (per-IP, 5/min) ---------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`stream:${ip}`, LIMITS.stream);
@@ -382,4 +396,4 @@ export async function GET(req: NextRequest) {
     return apiBadRequest(error ?? 'Invalid params');
   }
   return runInvestigationStream(params, req.signal);
-}
+});

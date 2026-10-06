@@ -3,6 +3,7 @@ import { openMeshDb, ingestExternalSignal, fetchExternalSignals } from '../_mesh
 import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
 import { validateMeshPayload } from '@/lib/validation';
 import { apiBadRequest, apiOk, apiRateLimited, apiServerError } from '@/lib/api-response';
+import { authedPOST } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,8 +17,15 @@ export const dynamic = 'force-dynamic';
  *
  * Body: `{ source_agent: string, signal_type: string, payload: any }`
  * Response: `{ id: string, received_at: string }`
+ *
+ * §34 / audit C2 — Protected by `authedPOST`. This endpoint is the primary
+ * entry point for external agents pushing data into CHISMOSO — without
+ * auth, anyone could pollute the inbox with arbitrary payloads (which are
+ * then surfaced to the LLM in the EVALUATE prompt). The mesh external
+ * signals are still quarantined in `<untrusted_external_signals>` tags in
+ * the prompt (audit C1), but auth prevents the inbox from being spammed.
  */
-export async function POST(req: NextRequest) {
+export const POST = authedPOST(async (req: NextRequest) => {
   // --- Rate limit (per-IP, 60/min) -------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`meshPost:${ip}`, LIMITS.meshPost);
@@ -51,7 +59,7 @@ export async function POST(req: NextRequest) {
       try { db.close(); } catch { /* ignore */ }
     }
   }
-}
+});
 
 /**
  * GET /api/mesh/external-signals?limit=20&unconsumed=1

@@ -16,6 +16,7 @@ import {
   validateMaxQueries,
   validateMaxRuntimeMs,
 } from '@/lib/validation';
+import { authedPOST } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,8 +55,13 @@ interface ChismosoReport {
  * This is a synchronous endpoint (long-running). For V2 we'd switch to a
  * job-based pattern with polling, but for V1 sync is fine because the
  * preview environment supports up to 5 min request duration.
+ *
+ * §34 / audit C2 — Protected by `authedPOST`: when `CHISMOSO_AUTH_ENABLED=true`,
+ * requests must carry a valid `X-Chismoso-Agent` header (SHA-256 of the
+ * token must appear in `CHISMOSO_AUTH_TOKENS`). When auth is disabled
+ * (default for dev), all callers are allowed.
  */
-export async function POST(req: NextRequest) {
+export const POST = authedPOST(async (req: NextRequest) => {
   // --- Rate limit (per-IP, 5/min) ---------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`investigate:${ip}`, LIMITS.investigate);
@@ -238,4 +244,4 @@ export async function POST(req: NextRequest) {
     return apiServerError('Investigation failed', payload);
   }
   return apiOk(payload);
-}
+});

@@ -8,13 +8,28 @@
  */
 
 // ---------------------------------------------------------------------------
-// PRINCIPIO DE VERDAD (sección 5 de la especificación)
+// PRINCIPIO DE VERDAD (sección 5 de la especificación — versión extendida §7)
+// ---------------------------------------------------------------------------
+//
+// V1.0 inicialmente sólo definía OBSERVED / DERIVED / INFERRED / PREDICTED /
+// UNKNOWN. AUDIT-A §7 (P0 #1) señaló que esto no permite distinguir:
+//   - UNVERIFIED  — observado por una sola fuente, sin corroboración
+//   - VERIFIED    — corroborado por múltiples fuentes independientes
+//   - ESTIMATED   — aproximación (ej. confianza decaída por staleness §15)
+//
+// La extensión es aditiva para no romper código existente que ya persiste
+// OBSERVED/DERIVED/INFERRED/PREDICTED/UNKNOWN. Los nuevos valores permiten
+// que cross-source.ts pueda promover el truth level cuando hay múltiples
+// fuentes confirmando un mismo hecho.
 // ---------------------------------------------------------------------------
 
 export enum TruthLevel {
-  OBSERVED = 'OBSERVED', // Una fuente realmente muestra esto
-  DERIVED = 'DERIVED', // Conclusión obtenida mediante procesamiento de evidencia
+  OBSERVED = 'OBSERVED', // Una fuente realmente muestra esto (raw signal)
+  VERIFIED = 'VERIFIED', // Corroborado por múltiples fuentes independientes
+  DERIVED = 'DERIVED', // Sintetizado a partir de evidencia observada (alias histórico)
   INFERRED = 'INFERRED', // Hipótesis razonable
+  ESTIMATED = 'ESTIMATED', // Aproximación (ej. confidence decaída por staleness)
+  UNVERIFIED = 'UNVERIFIED', // Una sola fuente, sin confirmación
   PREDICTED = 'PREDICTED', // Proyección futura
   UNKNOWN = 'UNKNOWN', // Información insuficiente
 }
@@ -54,7 +69,17 @@ export enum SourceType {
 }
 
 // ---------------------------------------------------------------------------
-// SIGNAL (sección 13)
+// SIGNAL (sección 13 — extendido §5)
+// ---------------------------------------------------------------------------
+//
+// AUDIT-A §5 (P0 #5) señaló tres campos faltantes requeridos por el spec:
+//   - observed_at  → cuándo ocurrió el evento en la fuente (vs `timestamp`
+//                    que es cuándo CHISMOSO lo capturó)
+//   - entity       → named entity extraída (restaurante, producto, persona)
+//   - unit         → unidad del `value` (mentions / count / score / ratio)
+//
+// Todos opcionales para preservar backward compatibility con señales ya
+// persistidas que no los tienen.
 // ---------------------------------------------------------------------------
 
 export interface Signal {
@@ -63,11 +88,14 @@ export interface Signal {
   keyword: string;
   source: string;
   sourceType: SourceType;
-  timestamp: string; // ISO
+  timestamp: string; // ISO — cuando CHISMOSO capturó la señal
+  observedAt?: string; // ISO — cuando ocurrió el evento en la fuente (§5)
   geography: string;
   metric: string;
   value: number | string;
   normalizedValue: number;
+  unit?: string; // unidad del value: 'mentions' | 'count' | 'score' | ... (§5)
+  entity?: string; // named entity extraída: restaurante, producto, persona (§5)
   direction: 'up' | 'down' | 'flat' | 'unknown';
   velocity: number; // cambio por unidad de tiempo, 0 si no aplica
   confidence: number; // 0..1
@@ -76,11 +104,30 @@ export interface Signal {
   metadata: Record<string, unknown>;
   rawSnippet: string;
   url?: string;
+  evidenceIds?: string[]; // back-ref a la Evidence que soporta esta señal (§5)
 }
 
 // ---------------------------------------------------------------------------
-// EVIDENCE (sección 6 — ADN de evidencia)
+// EVIDENCE (sección 6 — ADN de evidencia, extendido §8)
 // ---------------------------------------------------------------------------
+//
+// AUDIT-A §8 (P0 #3) señaló tres campos faltantes requeridos por el spec:
+//   - extracted_fact       → el hecho específico extraído, distinto del
+//                            rawValue (que es el snippet completo)
+//   - provenance           → cómo se obtuvo: 'web_search' | 'reddit_communities' |
+//                            'mesh_external' | 'deepen_content' | ...
+//   - verification_status  → 'unverified' | 'verified' | 'contradicted' | 'stale'
+//
+// Sin verification_status, una Evidence no puede ser invalidada más tarde
+// cuando una investigación más reciente la contradice. El modelo actual
+// trata toda Evidence persistida como verdad inmutable — esto lo arregla.
+// ---------------------------------------------------------------------------
+
+export type EvidenceVerificationStatus =
+  | 'unverified'
+  | 'verified'
+  | 'contradicted'
+  | 'stale';
 
 export interface Evidence {
   id: string;
@@ -93,14 +140,29 @@ export interface Evidence {
   topic: string;
   rawValue: string;
   normalizedValue: string;
+  extractedFact?: string; // hecho específico extraído (distinto de rawValue) (§8)
+  provenance?: string; // cómo se obtuvo: 'web_search' | 'reddit_communities' | ... (§8)
+  verificationStatus?: EvidenceVerificationStatus; // §8
   confidence: number;
   evidenceType: TruthLevel;
   metadata: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
-// TREND (sección 7.1 y 15)
+// TREND (sección 7.1 y 15 — extendido §17)
 // ---------------------------------------------------------------------------
+//
+// AUDIT-A §17 (P0 #4) señaló que `Trend` tenía `state` (NOISE / WEAK_SIGNAL /
+// EMERGING_TREND / ...) pero no `direction: up|down|flat`. El spec §17 lista
+// `direction` como campo requerido.
+//
+// `direction` se computa a partir de `growth`:
+//   - growth > 1.2 → 'up'    (más señales recientes que históricas)
+//   - growth < 0.8 → 'down'  (menos señales recientes que históricas)
+//   - else          → 'flat'
+// ---------------------------------------------------------------------------
+
+export type TrendDirection = 'up' | 'down' | 'flat';
 
 export enum TrendState {
   NOISE = 'NOISE',
@@ -116,6 +178,7 @@ export interface Trend {
   topic: string;
   description: string;
   state: TrendState;
+  direction: TrendDirection; // §17 — computed from growth
   confidence: number;
   sourcesCount: number;
   signalsCount: number;
@@ -227,6 +290,12 @@ export interface Investigation {
   providerRuns: ProviderRun[];
   iterations: number;
   budget: InvestigationBudget;
+  /**
+   * ID of the ExecutionTrace that wraps this investigation (§30).
+   * Optional for backward compatibility with investigations persisted
+   * before the ExecutionTrace system existed.
+   */
+  executionId?: string;
 }
 
 // ---------------------------------------------------------------------------

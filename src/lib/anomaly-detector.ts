@@ -26,6 +26,16 @@
  * fetched via `Repositories`; this port would call it with rows fetched via
  * the readonly singleton. That eliminates the port entirely.
  *
+ * ALERTS (Task IMP-4, spec §20)
+ * ---
+ * The chismoso `AnomalyDetector` accepts an optional `AlertManager` in its
+ * constructor and emits alerts as a side effect of `detectAll()`. This port
+ * mirrors that behavior: `detectAnomalies()` is itself side-effect-free
+ * (returns the raw findings), but the `/api/anomalies` route calls
+ * `emitAlertsForAnomalies(anomalies)` from `./alerts-server.ts` after
+ * detection to persist an Alert row per finding (idempotent — re-emits
+ * inside the cooldown window are SUPPRESSED).
+ *
  * The detector reads the chismoso SQLite DB via the singleton connection in
  * `db-chismoso.ts` (readonly, shared across requests — no per-call open).
  */
