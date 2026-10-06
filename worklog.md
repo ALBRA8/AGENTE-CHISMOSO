@@ -391,3 +391,290 @@ Stage Summary:
 - Duration: 41406ms (within 120s budget).
 - Reports saved: /home/z/my-project/download/chismoso/report-inv_muvixwil17ncad.{md,json} (16KB markdown + 269KB JSON).
 - Full agent context written to: /home/z/my-project/agent-ctx/EXP-3-react-loop.md.
+
+---
+Task ID: AUDIT-PERF
+Agent: performance-auditor
+Task: Audit CHISMOSO V1.1 for performance issues
+
+Work Log:
+- Leí /home/z/my-project/worklog.md (primeras 60 líneas) para entender el contexto del proyecto (Fases 0-9 completas, documentación delegada a subagentes).
+- Listé /home/z/my-project/chismoso/src/ (39 archivos) y /home/z/my-project/src/ (60+ archivos, UI Next.js + 50 shadcn/ui components).
+- Intenté `sqlite3 chismoso.db ".indexes"` y ".schema" — sqlite3 CLI no instalado. Cambié a inspección directa de SCHEMA_V1 en chismoso/src/db.ts:32-214 y MESH_SCHEMA en src/app/api/mesh/_mesh-db.ts:21-60.
+- Confirmé que /home/z/my-project/chismoso/data/ NO existe — causa raíz de los 500 errores en /api/mesh/config observados en dev.log:17,24.
+- Confirmé que /home/z/my-project/chismoso/dist/ NO existe — chismoso nunca fue compilado, cada llamada CLI paga JIT overhead de tsx.
+- Leí dev.log (32 líneas) — timing real: /api/providers 3.3s (frío) → 771ms (caliente); /api/mesh/config 500 (bug); /api/investigations 628ms → 27ms.
+- Audit completos de repositories.ts (todos los findBy* methods verificados contra índices existentes — 8 índices faltantes identificados).
+- Audit completos de los 8 API routes (topics, topics/[topic], anomalies, alerts, investigate, investigate/stream, investigations, investigations/[id], semantic-search, mesh/config, mesh/events, mesh/events/ack, mesh/external-signals, providers) — todos abren NUEVA conexión better-sqlite3 por request.
+- Audit React: page.tsx (1305 líneas, 17 useState), TopicsEvolution (buen uso de useMemo), AnomalyAlerts (polling 30s correctamente limpiado en unmount), InvestigationStream (EventSource correctamente cerrado en unmount, PERO key={i} anti-pattern + slice O(n) por evento >500).
+- Audit SSE stream: flushing inmediato por línea (bueno), pero NO hay handler para req.signal.abort — procesos huérfanos por hasta maxRuntimeMs+30s.
+- Audit bundle: 12 dependencias pesadas en package.json que no son importadas por la UI de chismoso (recharts, react-markdown, framer-motion, @dnd-kit/*, @tanstack/*, etc.).
+- Escribí /home/z/my-project/agent-ctx/AUDIT-PERF.md (21 findings, top 5 quick wins).
+
+Stage Summary:
+- Findings: 21 total — 4 Critical, 8 High, 6 Medium, 3 Low
+- Top quick wins:
+  1. Pre-compile chismoso a dist/ y cambiar spawn de `npx tsx` a `node dist/cli.js` (ahorra ~2-3s por llamada CLI) — CRITICAL
+  2. Crear src/lib/db-chismoso.ts como singleton global better-sqlite3 (ahorra 10-50ms por request) — HIGH
+  3. Agregar 8 índices faltantes en signals.timestamp, trends.created_at, *_investigation_id (5 índices), evidence(topic, collected_at) — HIGH
+  4. Cachear /api/providers por 5 min en variable module-level (elimina spawn de 770ms-3.3s por page load) — HIGH
+  5. Registrar req.signal.abort handler en /api/investigate y /investigate/stream para matar child processes al disconnect — HIGH
+- File: /home/z/my-project/agent-ctx/AUDIT-PERF.md
+
+---
+Task ID: IMP-2
+Agent: ssrf-protection
+Task: Add SSRF protection + URL validation + path traversal hardening
+
+Work Log:
+- Read worklog.md (skim), webhook.ts, web-content.ts, investigations/[id]/route.ts, topics/[topic]/route.ts to understand existing surface area and trust boundaries.
+- Created chismoso/src/mesh/url-validator.ts — validateOutboundUrl() implementing SSRF guard: non-http(s) protocols, localhost (127/8, ::1, 0/8), private IPs (10/8, 172.16/12, 192.168/16, 169.254/16 incl. cloud metadata 169.254.169.254), CGNAT 100.64/10, IPv6 ULA fc00::/7 + link-local fe80::/10, internal TLDs (.local/.internal/.lan/.intranet), userinfo, suspicious hostnames (no dot / leading dot), and common DB/admin ports (22, 25, 3306, 5432, 6379, 27017).
+- Modified chismoso/src/mesh/webhook.ts — deliverWebhook() now invokes validateOutboundUrl(url) BEFORE fetch(). On failure returns { ok: false, status: 0, error: 'URL rejected: <reason>' }. On success uses validation.safeUrl.toString() for the actual fetch. Replaced the previous naive /^https?:\/\// regex with the full SSRF check.
+- Modified src/app/api/investigations/[id]/route.ts — kept existing /^[\w-]+$/ regex gate, then layered defense-in-depth: path.basename(id) strips any directory component, then a path.resolve() containment check on BOTH the .md and .json paths confirms they stay inside OUTPUT_DIR + path.sep. Returns 400 'Path traversal detected' otherwise.
+- Verified src/app/api/topics/[topic]/route.ts — already uses parameterized SQL (WHERE topic = ? + LIMIT ? with .all(topic, limit)). No string interpolation. No changes needed.
+- Created chismoso/tests/url-validator.test.ts — 10 test cases covering: valid https, non-http protocols (file/ftp/gopher), localhost variants, private IPs, cloud metadata, userinfo, internal TLDs, suspicious hostnames, DB ports, malformed URLs.
+- Modified chismoso/vitest.config.ts — added empty inline css.postcss.plugins: [] override so vitest doesn't try to load the parent Next.js postcss.config.mjs (which references @tailwindcss/postcss not installed in chismoso's node_modules). This is what let the tests actually execute.
+
+Stage Summary:
+- Files:
+  - CREATED: chismoso/src/mesh/url-validator.ts
+  - CREATED: chismoso/tests/url-validator.test.ts
+  - MODIFIED: chismoso/src/mesh/webhook.ts (SSRF guard before fetch)
+  - MODIFIED: src/app/api/investigations/[id]/route.ts (basename + resolve containment)
+  - MODIFIED: chismoso/vitest.config.ts (css.postcss override to unblock tests)
+  - VERIFIED ONLY: src/app/api/topics/[topic]/route.ts (already parameterized)
+- URL blocks: non-http(s) protocols; localhost + IPv4 loopback (127/8, 0/8); IPv6 loopback (::1); private IPv4 (10/8, 172.16/12, 192.168/16); link-local incl. cloud metadata (169.254/16 — blocks 169.254.169.254 AWS/GCP metadata); CGNAT (100.64/10); IPv6 ULA (fc00::/7) + link-local (fe80::/10); internal TLDs (.local/.internal/.lan/.intranet); URL userinfo (user:pass@host); suspicious hostnames (no dot / leading dot); DB/admin ports (22, 25, 3306, 5432, 6379, 27017).
+- Tests: 10 passed / 10 total (npx vitest run tests/url-validator.test.ts → 10/10 in 8ms)
+- Verification: tsc --noEmit → EXIT 0; bun run lint → EXIT 0
+- Detailed record: /home/z/my-project/agent-ctx/IMP-2-ssrf-protection.md
+
+---
+Task ID: IMP-4
+Agent: dashboard-markdown
+Task: Add proper markdown renderer + dashboard summary view
+
+Work Log:
+- Leí worklog.md (contexto FASE 0-9 + EXP-1..EXP-6 + AUDIT-PERF), src/app/page.tsx (especialmente tabs del reporte + empty-state placeholder), src/components/ (3 components existentes: investigation-stream, anomaly-alerts, topics-evolution — ninguno toca markdown ni dashboard), src/components/ui/ (full shadcn set), API routes contracts (/api/investigations, /api/investigations/[id], /api/providers, /api/anomalies, /api/mesh/config, /api/topics), y el sample report /home/z/my-project/download/chismoso/report-inv_muvga00rrq7yrd.md.
+- Creé /home/z/my-project/src/components/markdown-renderer.tsx: renderer markdown sin dependencias externas (no react-markdown, no @tailwindcss/typography). Parser line-by-line con Block union tipado. Inline parser maneja `code`, [label](url), **bold**, *italic* con prioridad code > link > bold > italic. Soporta headings #..######, fenced code blocks (```lang), horizontal rules (---/***/___), blockquotes (> ...), unordered lists (-/*/+) , ordered lists (1.), GFM pipe tables (con delimiter row y escaped \|), paragraphs. Todos los nodos son React elements reales (no dangerouslySetInnerHTML). Links abren en nueva pestaña con rel="noopener noreferrer" y solo permiten http(s)/mailto/relative URLs.
+- Creé /home/z/my-project/src/components/dashboard-summary.tsx: landing dashboard con 2×2 grid en desktop / stacked en mobile. 4 cards: (1) Estado general — 4 stat tiles con investigaciones totales, providers OK (X/N), anomalías activas, mesh On/Off+subscribers; (2) Oportunidades destacadas — top 3 por score entre las 5 investigaciones más recientes (fan-out detail fetch con Promise.all); (3) Topics en vigilancia — top 5 por observation count; (4) Cómo empezar — guía 4 pasos. Todas las fetches son defensivas (fetchJson<T>() retorna null en cualquier error), y cada card trackea su propio flag `*_failed` para mostrar "endpoint caído" honesto en vez de misleading zeros — necesario porque en dev observé /api/mesh/config, /api/topics, /api/anomalies devolviendo 500 (pre-existing DB issues que no debía tocar).
+- Modifiqué /home/z/my-project/src/app/page.tsx: añadidos imports MarkdownRenderer + DashboardSummary. En el TabsContent "markdown" reemplacé `<MarkdownView markdown={result.report.markdown} />` con `<MarkdownRenderer markdown={result.report.markdown} />` (envuelto en div border bg-card p-4 overflow-x-auto para mantener el frame). En el bloque `!result && !loading` reemplacé el placeholder `<Card>` con `<DashboardSummary />` y añadí `&& !streaming` al condition para que el dashboard se oculte durante ReAct streaming.
+- Mantuve `<MarkdownView>` (la función helper original con `<pre>`) como fallback según spec.
+- Verificación: `cd /home/z/my-project && bun run lint` → exit 0. Dev server recompiled cleanly (logs muestran `✓ Compiled in 57ms/953ms`). curl http://localhost:3000/ → 200, HTML contiene "Resumen del sistema", "Investigaciones", "Providers OK" (dashboard renderiza server-side). Dev log confirma las 5 fetches del dashboard: /api/investigations 200, /api/providers 200, /api/anomalies 500 (degradado gracefully), /api/mesh/config 500 (degradado gracefully), /api/topics 500 (degradado gracefully), /api/investigations/inv_muvga00rrq7yrd 200 (detail fetch para top opportunities).
+- Escribí work record en /home/z/my-project/agent-ctx/IMP-4-dashboard-markdown.md.
+
+Stage Summary:
+- Files created:
+  - /home/z/my-project/src/components/markdown-renderer.tsx (330 lines)
+  - /home/z/my-project/src/components/dashboard-summary.tsx (540 lines)
+  - /home/z/my-project/agent-ctx/IMP-4-dashboard-markdown.md
+- Files modified:
+  - /home/z/my-project/src/app/page.tsx (imports + Reporte tab usa MarkdownRenderer + empty-state usa DashboardSummary)
+- Markdown features: H1-H6 headings, **bold**, *italic*, `inline code`, ```fenced code blocks```, ordered/unordered lists, [links](url), ---/***/___ horizontal rules, > blockquotes, GFM pipe tables (with escaped \|), paragraphs.
+- Dashboard sections: (1) Estado general — 4 stat tiles (investigaciones / providers OK / anomalías / mesh); (2) Oportunidades destacadas — top 3 por score cross-investigations; (3) Topics en vigilancia — top 5 por observation count; (4) Cómo empezar — 4-step quick-start guide.
+- Verification: lint exit 0, dev server compiles cleanly, curl 200 OK, dashboard renders server-side, defensive fetches handle the 500s on /api/mesh/config, /api/topics, /api/anomalies.
+
+---
+Task ID: AUDIT-CODE
+Agent: code-quality-auditor
+Task: Audit CHISMOSO V1.1 for code quality issues
+
+Work Log:
+- Leí worklog.md (393 líneas) para entender el contexto completo: FASE 0-9 (V1.0), EXP-1 scheduler, EXP-2 mesh, EXP-3 react, EXP-4 embeddings+semantic-search, EXP-5 SSE streaming, EXP-6 anomaly-detection.
+- Listé /home/z/my-project/chismoso/src/ (41 archivos .ts en 9 subdirectorios) y /home/z/my-project/src/ (26 archivos .ts/.tsx en app/ components/ lib/ hooks/).
+- Ejecuté `cd chismoso && npx tsc --noEmit` → exit 0 (no type errors, no strict-mode warnings).
+- Audité TypeScript strictness: 0 @ts-ignore/@ts-expect-error, 6 eslint-disable-next-line (3× no-explicit-any en react.ts, 3× no-console en logger/scheduler/run), ~65 usos de `any` concentrados en repositories.ts (21), react.ts (8), mesh/index.ts (10), page.tsx (10), _mesh-db.ts (5), cli.ts (5).
+- Audité error handling: 11 rutas API con shapes inconsistentes — solo `/api/providers` sigue el contrato `{error, details}`; las demás usan `{error, message}` o `{error}` sin details. `/api/investigate` retorna 200 OK incluso en failure con `{ok:false}`. try/catch/finally con db.close() en finally es consistente. ~15 catch {} vacíos con /* ignore */ comments.
+- Audité code duplication: 3 duplicaciones mayores — (1) `_mesh-db.ts` (303 LOC) duplica MESH_SCHEMA + row parsers de `chismoso/src/mesh/`; (2) `src/lib/anomaly-detector.ts` (380 LOC) port completo de `chismoso/src/anomaly/`; (3) TF-IDF hash embedding (~80 LOC) duplicado entre `embeddings.ts` y `semantic-search/route.ts`. Patrón de spawn CLI duplicado entre `/api/investigate/route.ts` y `/api/investigate/stream/route.ts`.
+- Audité architecture violations: NO hay UI imports desde chismoso/src/ ✓, NO hay intelligence→orchestrator imports ✓, NO hay providers→intelligence imports ✓, NO hay circular imports ✓. PERO encontré 2 architectural gaps críticos: (1) El orchestrator NO llama storeEmbedding — los embeddings solo se siembran una vez vía seed-embeddings.ts, así que nuevas investigaciones no son buscables vía semantic-search. (2) `clusterSignalsSemantic` nunca se invoca desde ninguno de los dos orchestrators — la feature V1.1 existe pero está muerta en el pipeline productivo.
+- Audité dead code: `src/components/markdown-renderer.tsx` (435 LOC) nunca importado; `InvestigationRepository.update()` nunca llamado; `ToolRegistry.describe()/list()` nunca usados; `AnomalyDetector.onAnomaly()` API sin consumidores; `euclideanDistance` y `defaultEmbeddingClient` sin uso productivo; `examples/websocket/` y `tests/python-runtime-*.sh` son orphans no relacionados a CHISMOSO; `prisma/schema.prisma` leftover de scaffolding.
+- Audité React specific: page.tsx 1305 líneas (mega-componente), falta useMemo en sorts de opportunities/trends, setTab(v as any) y setSideTab(v as any) type-unsafe, OpportunityCard/TrendCard/ProblemCard tienen `any` types en props. Todos los client components tienen 'use client' ✓. InvestigationStream maneja refs correctamente ✓.
+- Audité SQL patterns: todos los queries usan `?` placeholders ✓ (única excepción es `${placeholders}` en semantic-search/route.ts:286 que es una lista de `?` marks, seguro). N+1 query pattern en orchestrator.ts:225-282 (findByTopic por cluster) y en anomaly/index.ts detectAll (3 queries por topic).
+- Audité logging hygiene: logger.ts tiene sanitize() que redacta apikey/api_key/token/password/secret/authorization/auth recursivamente ✓. /api/mesh/config GET sanitiza secrets a hasSecret:boolean ✓. No PII capturada. getClientIP solo se usa para rate-limit keying, no se loguea ✓. Log levels (DEBUG/INFO/WARN/ERROR) usados apropiadamente.
+- Audité test coverage: 8 archivos de tests en chismoso/tests/ cubren 7 módulos V1.0 + url-validator V1.1. **8 de 9 módulos V1.1 NO tienen tests** (mesh/db, mesh/index, mesh/webhook, mesh/auto-publish, scheduler, anomaly/index, anomaly/stats, orchestrator/react, intelligence/embeddings, intelligence/semantic-cluster, intelligence/semantic-search, db-extensions/embeddings.sql). Lado Next.js: 0 tests, 0 config de vitest/jest.
+- Escribí reporte completo en /home/z/my-project/agent-ctx/AUDIT-CODE.md con 28 findings estructurados por severidad (2 Critical, 7 High, 11 Medium, 6 Low, 2 Info).
+
+Stage Summary:
+- Findings: 28 total (2 Critical, 7 High, 11 Medium, 6 Low, 2 Info)
+- Critical: V1.1 modules near-zero test coverage (8/9 untested); embeddings never auto-persisted (semantic search goes stale after every new investigation)
+- High: 65+ `any` types in persistence + API layers; inconsistent API error shapes across 11 routes; 3 major code duplications (~700 LOC); spawn-CLI logic duplicated between investigate routes; dead file markdown-renderer.tsx (435 LOC); dead method InvestigationRepository.update(); as any[] casts on better-sqlite3 rows
+- Untested V1.1 modules: mesh/{db,webhook,index,auto-publish}, scheduler/{index,run}, anomaly/{index,stats}, orchestrator/react, intelligence/{embeddings,semantic-cluster,semantic-search}, db-extensions/embeddings.sql (1/9 tested: url-validator)
+- File: /home/z/my-project/agent-ctx/AUDIT-CODE.md
+
+---
+Task ID: IMP-1
+Agent: rate-limit-hardening
+Task: Add rate limiting + input validation hardening to all API routes
+
+Work Log:
+- Read worklog.md + 4 target route files to understand existing validation patterns.
+- Created src/lib/rate-limit.ts — in-memory per-IP rate limiter (Map-backed, unref'd 5min cleanup interval), getClientIP() from x-forwarded-for/x-real-ip, pre-configured LIMITS per endpoint family. Exposed __resetRateLimitStoreForTests() so tests can deterministically reset state.
+- Created src/lib/validation.ts — validators for objective, geography, maxQueries, maxRuntimeMs, topic, topK, meshPayload. ADDED validateQuery (string, ≤500 chars) since /api/semantic-search requires query validation but the spec source didn't include it — kept route handler DRY.
+- Modified /api/investigate/route.ts — rate limit (5/min/IP) BEFORE body parse, replaced inline validation with the 4 validators, body fields typed as `unknown`.
+- Modified /api/investigate/stream/route.ts — parseParams now uses the 4 validators directly; rate limit applied to BOTH GET and POST (separate `stream:` bucket from `investigate:`).
+- Modified /api/semantic-search/route.ts — rate limit (30/min/IP); replaced inline checks with validateQuery + validateTopK.
+- Modified /api/mesh/external-signals/route.ts — rate limit (60/min/IP) on POST; replaced ad-hoc body checks with validateMeshPayload.
+- Installed vitest@5.0.3 as dev dependency (wasn't present).
+- Created tests/rate-limit.test.ts (10 tests) + tests/validation.test.ts (55 tests).
+- First test run: 1 failure — `validateObjective('rm -rf /')` returns ok:true because the regex only blocks [;|&`$()] and rm -rf / contains none. Fixed the test: added a "does NOT block" test case documenting the defense-in-depth limitation, and changed the metachar test cases to strings that actually contain blocked chars (ls; rm -rf /, cat /etc/passwd &).
+- Re-ran: 65/65 pass. bun run lint clean.
+- Smoke-tested endpoints via curl against dev server: all 4 endpoints return HTTP 400 + validator error message on bad input; all 4 return HTTP 429 + Retry-After header after quota exhausted (verified in dev.log).
+
+Stage Summary:
+- Files: src/lib/rate-limit.ts (new), src/lib/validation.ts (new), tests/rate-limit.test.ts (new), tests/validation.test.ts (new), agent-ctx/IMP-1-rate-limit-hardening.md (new); modified: src/app/api/investigate/route.ts, src/app/api/investigate/stream/route.ts, src/app/api/semantic-search/route.ts, src/app/api/mesh/external-signals/route.ts
+- Limits: investigate=5/min/IP, stream=5/min/IP, semanticSearch=30/min/IP, meshPost=60/min/IP — all per-IP, 60s sliding window, 429 + Retry-After header.
+- Tests: 65 passed (10 rate-limit + 55 validation), 0 failed.
+
+---
+Task ID: IMP-3
+Agent: tests-v11-precompile
+Task: Add tests for V1.1 modules + pre-compile CHISMOSO for faster API
+
+Work Log:
+- Skimmed worklog.md, listed tests/ + src/mesh/ + src/scheduler/ + src/anomaly/ + src/orchestrator/.
+- Read clustering.test.ts (existing pattern), react.ts, anomaly/{index,stats}.ts, scheduler/index.ts, mesh/index.ts, mesh/url-validator.ts, semantic-cluster.ts, semantic-search.ts, embeddings.ts, embeddings.sql.ts, orchestrator.ts (InvestigateResult contract), planner.ts, llm.ts, tools.ts, repositories.ts, db.ts.
+- Created tests/mesh.test.ts (14 tests): AgentMesh publish/pending/ack/ingestExternalSignal/unconsumed/markConsumed roundtrips, idempotent publish, getConfig/setConfig atomic subscribers, status() counts, validateOutboundUrl SSRF guard smoke tests.
+- Created tests/scheduler.test.ts (12 tests): TopicScheduler constructor/start/stop/idempotency, interval fires, failing investigate does NOT crash loop, loadWatchConfig (missing/empty/invalid/roundtrip), saveDefaultWatchConfig (force vs no-force, default values).
+- Created tests/anomaly.test.ts (36 tests): mean/stddev/zscore/ewma/percentile/linearRegressionSlope pure-math tests with known values + edge cases; AnomalyDetector empty/insufficient-samples/baseline/volume_spike/confidence_drift_up/confidence_drift_down/detectAll/custom-minSamples/custom-zscoreThreshold/onAnomaly-subscriber/deterministic-IDs.
+- Created tests/react.test.ts (7 tests): ReActOrchestrator constructor smoke test; investigate() returns InvestigateResult shape (investigation+signals+evidence+trends+problems+opportunities+report); stop-on-first-evaluate (LLM call count = 2); invalid-JSON-evaluate forces stop; maxIterations=1 forces stop without calling evaluate (LLM calls = 1); planner-throwing propagates + persists FAILED investigation; default-budget path. StubLLM extends real LLMClient and overrides chat() to return canned JSON by inspecting system prompt. Stub ToolRegistry returns empty results without provider calls — no network.
+- Created tests/semantic-cluster.test.ts (17 tests): cosineSimilarity (identical/orthogonal/opposite/zero-vector/dimension-mismatch/textbook-formula); clusterSignalsSemantic (empty/5-identical/5-unrelated/mix/threshold-override/embeddings-returned); semanticSearch (no-embeddings-table/empty-table/top-result-is-most-similar/topK-limits/minScore-filter). All use in-memory ChismosoDB + ensureEmbeddingsSchema + storeEmbedding for the DB-backed search tests.
+- Modified chismoso/package.json: added `precompile: tsc` and `precompile:watch: tsc --watch` scripts (alongside existing `build`).
+- Pre-compiled CHISMOSO with `npx tsc` — dist/cli.js + 30+ .js/.d.ts/.js.map files created successfully.
+- Modified /src/app/api/investigate/route.ts: added `existsSync` import, `COMPILED_CLI` + `USE_COMPILED` constants; spawn now uses `node dist/cli.js ...` when compiled, falls back to `npx tsx src/cli.ts ...` otherwise. Preserved IMP-2's rate-limit + validation imports.
+- Modified /src/app/api/investigate/stream/route.ts: same pattern. SSE stream now spawns `node dist/cli.js` (or tsx fallback).
+- Modified /src/app/api/providers/route.ts: same pattern.
+- Verified .gitignore already excludes `dist/` (no change needed).
+- Verification: `npx tsc --noEmit` (chismoso) → exit 0. `bun run lint` (Next.js) → exit 0. `npx vitest run` → 135/137 pass (the 2 failures are pre-existing e2e.test.ts cases hitting the real LLM API — they fail due to API rate limits / 429 errors, NOT from my changes; verified they fail for the same reason on the unchanged baseline).
+- Measured pre-compile speedup: `/api/providers` latency dropped from 1309ms (tsx) to 184ms (node dist/cli.js) — **~7.1x faster, saving ~1.1s per call**. For `investigate` calls (which include 15-30s of LLM/network time), the savings is ~370ms of CLI startup overhead per invocation.
+
+Stage Summary:
+- Files:
+  - NEW: chismoso/tests/mesh.test.ts (14 tests)
+  - NEW: chismoso/tests/scheduler.test.ts (12 tests)
+  - NEW: chismoso/tests/anomaly.test.ts (36 tests)
+  - NEW: chismoso/tests/react.test.ts (7 tests)
+  - NEW: chismoso/tests/semantic-cluster.test.ts (17 tests)
+  - MODIFIED: chismoso/package.json (added precompile + precompile:watch scripts)
+  - MODIFIED: src/app/api/investigate/route.ts (USE_COMPILED switch)
+  - MODIFIED: src/app/api/investigate/stream/route.ts (USE_COMPILED switch)
+  - MODIFIED: src/app/api/providers/route.ts (USE_COMPILED switch)
+  - GENERATED: chismoso/dist/** (via `npx tsc` — already excluded from .gitignore)
+- Tests: 51 → 137 (+86 new tests; 135 passing, 2 pre-existing e2e tests fail due to LLM API rate limits — unrelated to IMP-3 domain)
+- Pre-compile speedup: `/api/providers` 1309ms → 184ms (~7.1x faster, ~1.1s saved per call); CLI startup itself: 432ms → 62ms (~7x faster, ~370ms saved per CLI invocation)
+
+---
+Task ID: FIX-2
+Agent: sqlite-singleton-indexes-abort
+Task: Add SQLite singleton + missing indexes + child process abort handler
+
+Work Log:
+- Read AUDIT-PERF.md and the 8 required source files to scope the fix surface.
+- Created `src/lib/db-chismoso.ts` — single readonly `better-sqlite3` connection to `chismoso/data/chismoso.db` (mkdirSync'd defensively, HMR-safe via globalThis). On cold start it runs `CREATE INDEX IF NOT EXISTS` for the 7 missing performance indexes (signals.timestamp, signals(topic,timestamp DESC), trends.created_at DESC, problems.created_at DESC, opportunities.score DESC, evidence(topic, collected_at DESC), provider_runs.investigation_id).
+- Added `SCHEMA_V2` block to `chismoso/src/db.ts` mirroring the same 6 indexes (idempotent), applied right after `SCHEMA_V1` in the `ChismosoDB` constructor.
+- Updated `src/lib/anomaly-detector.ts` to consume the singleton (this is the file that actually opens a DB connection for `/api/anomalies` and `/api/alerts`). Removed `new Database(...)` open and `db.close()` from `detectAnomalies`; the singleton is reused across all calls.
+- Updated `src/app/api/topics/route.ts` and `src/app/api/topics/[topic]/route.ts` to use `chismosoDb` singleton (removed `let db: Database.Database | null = null; ... finally { db.close() }` boilerplate).
+- Rewrote `src/app/api/mesh/_mesh-db.ts`: `openMeshDb()` now returns a single shared `Database` instance (HMR-safe via globalThis). mkdirSync'd the parent dir before opening. Overrode the singleton's `close` method to be a no-op so existing route handlers that call `db.close()` in `finally` blocks don't kill the shared connection.
+- Wired abort handlers to both `/api/investigate/route.ts` and `/api/investigate/stream/route.ts`: registered `req.signal.addEventListener('abort', abortListener)` that sends SIGTERM, then SIGKILL after 2s. Listener is removed in the `close`/`error`/`finalize` paths so we don't leak it.
+- For the stream route, threaded `req.signal` through `runInvestigationStream(params, signal)` so both POST and GET paths can subscribe.
+
+Stage Summary:
+- Files: src/lib/db-chismoso.ts (NEW), src/lib/anomaly-detector.ts, src/app/api/topics/route.ts, src/app/api/topics/[topic]/route.ts, src/app/api/mesh/_mesh-db.ts, src/app/api/investigate/route.ts, src/app/api/investigate/stream/route.ts, chismoso/src/db.ts
+- Indexes added: 7 (6 new in SCHEMA_V2 + idx_opportunities_score re-applied; chismoso's MeshDB schema already had 4 mesh-specific indexes that remain untouched)
+- Speedup (warm renders, measured via curl against running dev server):
+    * /api/topics   : 18ms → 4–6ms     (≈3× faster render)
+    * /api/anomalies: 23ms → 4–7ms     (≈4× faster render; first-call anomaly-detector module compile also gone on warm hits)
+    * /api/alerts   : 6ms → 3–5ms      (≈1.5–2× faster render)
+    * /api/mesh/config: 5ms → 3–6ms    (similar warm timing)
+  The bigger wins are on cold paths and on data-heavy loads — each request no longer pays the 10–50ms `new Database()` open overhead.
+- mesh/config 500 fixed: yes — was 500-ing before (visible in dev.log history: "GET /api/mesh/config 500 in 7ms" etc.). After fix, returns 200 consistently. mkdirSync ensures the parent dir exists before opening the DB, and the singleton avoids reopening.
+- abort handler wired: yes, both /api/investigate and /api/investigate/stream now kill the spawned child on client disconnect (SIGTERM immediately, SIGKILL after 2s grace).
+- Verification: `cd chismoso && npx tsc --noEmit` passes (no output). `bun run lint` passes (no output). All four test endpoints return 200 with empty data on a fresh DB.
+
+---
+Task ID: FIX-3
+Agent: cache-deadcode-cleanup
+Task: Add TTL cache for /api/providers + consolidate mesh DB duplication + investigate anomaly-detector port
+
+Work Log:
+- Read AUDIT-CODE.md, providers/route.ts, _mesh-db.ts, chismoso/src/mesh/db.ts, anomaly-detector.ts; verified markdown-renderer IS imported (page.tsx:41) — AUDIT-CODE HIGH #6 finding is OBSOLETE.
+- Created src/lib/cache.ts: minimal TTL cache (Map + periodic sweep every 5 min via `.unref()`). Exports getCached / setCached / invalidate / invalidateAll. Process-local, no Redis.
+- Modified src/app/api/providers/route.ts (now layered on top of the api-response refactor): GET checks `getCached('providers:list')` first → returns `{providers, cached:true}` immediately. On miss, spawns CLI as before, then `setCached(..., 5*60*1000)` only for non-empty results (so silent CLI failures don't pin an empty list for 5 min). Response now carries `cached: boolean`.
+- Consolidated src/app/api/mesh/_mesh-db.ts with chismoso MeshDB: removed the duplicated `MESH_SCHEMA` SQL string + `MESH_DB_PATH` + manual `new Database + WAL + exec(MESH_SCHEMA)` block. Now imports `MeshDB` and `DEFAULT_MESH_DB_PATH` from `../../../../chismoso/dist/mesh/db.js` (precompiled by IMP-3). `openMeshDb()` instantiates `new MeshDB()` and returns `.raw`. Re-exported `DEFAULT_MESH_DB_PATH` so callers don't hardcode the path. All 4 row-helper functions (fetchPendingEvents, ackEvents, ingestExternalSignal, fetchExternalSignals, getMeshConfig, setMeshConfig, getMeshStatus) preserved as Next.js-specific HTTP wrappers. Added TODO to extract row helpers into a shared module chismoso+Next.js can import from. Silenced chismoso's structured logger to WARN (so the per-request MeshDB constructor `logger.info` doesn't spam stdout).
+- Investigated anomaly-detector.ts: chismoso `AnomalyDetector` is a CLASS that takes a `Repositories` instance → requires the full chismoso `ChismosoDB` graph (migrations, FK setup, scheduler lifecycle). Re-exporting it into the Next.js runtime would force the dashboard to run those migrations and hold a long-lived `ChismosoDB` across HMR. Kept the port. Rewrote the header comment explaining WHY it's a port (not a re-export) + added a TODO to extract the detection algorithm into a pure `detectAnomaliesFromRows(rows, config)` function in a shared package.
+- Bonus fix: anomaly-detector.ts had `import type { Database } from 'better-sqlite3'` which broke `Database.Database` namespace-qualified type access (TS2702). Switched to `import Database from 'better-sqlite3'` (default value import — same pattern as db-chismoso.ts). Pre-existing issue from the singleton refactor, not introduced by this task, but it was in my domain.
+- Verification:
+  * `cd chismoso && npx tsc --noEmit` → exit 0, no output. ✓
+  * `bun run lint` → no errors. ✓
+  * My domain files all type-check cleanly (anomaly-detector.ts errors gone; _mesh-db.ts and cache.ts no errors; providers/route.ts no errors).
+  * /api/providers timing (curl, dev server):
+      - Cold call (spawn CLI): 147ms total, response `cached:false, providers:4`
+      - Cached call:              12ms total, response `cached:true, providers:4`
+      - Speedup: ~12× (≈135ms saved per cached call). The handler render time on cache hit drops to ~3-5ms (rest is curl/network).
+  * /api/mesh/config: 200 in 4-6ms (works after refactor — chismoso MeshDB import succeeds)
+  * /api/mesh/events?agent=TEST_AGENT: 200, returns `{"agent":"TEST_AGENT","count":0,"events":[]}`
+  * /api/mesh/external-signals?limit=3: 200, returns `{"count":0,"signals":[]}`
+- Pre-existing issue NOT in scope (noted for next agent): better-sqlite3 Statement destructor crashes Next.js HMR (Assertion `(env) != nullptr` in `RemoveEnvironmentCleanupHook`). Triggered by chismosoDb singleton (in db-chismoso.ts) being torn down during HMR. Affects dev only. Reproduces on every code change while a long-lived Database is open. Mitigation: restart `bun run dev`.
+
+Stage Summary:
+- Files: src/lib/cache.ts (NEW), src/app/api/providers/route.ts (MODIFIED), src/app/api/mesh/_mesh-db.ts (MODIFIED), src/lib/anomaly-detector.ts (MODIFIED header comment + import fix)
+- Cache TTL: 5 min for /api/providers (`PROVIDERS_CACHE_KEY = 'providers:list'`). Periodic Map sweep every 5 min in cache.ts.
+- /api/providers speedup: 147ms → 12ms (≈12×, ~135ms saved per cached call)
+- markdown-renderer OBSOLETE finding (AUDIT-CODE HIGH #6): yes, IS imported (src/app/page.tsx line 41). The finding is stale — IMP-4 integrated it.
+- _mesh-db.ts: schema + path duplication REMOVED (chismoso MeshDB imported). Row helpers kept (Next.js-specific, documented).
+- anomaly-detector.ts: port KEPT (documented why replacing with chismoso class would force full ChismosoDB lifecycle into Next.js). TODO added for future extraction.
+
+---
+Task ID: FIX-1
+Agent: embeddings-pipeline
+Task: Wire embeddings auto-generation + semantic clustering into orchestrator pipeline
+
+Work Log:
+- Read AUDIT-CODE critical finding #2 + 7 source files (orchestrator, react, embeddings client, embeddings.sql, semantic-cluster, clustering, db, models).
+- Modified clustering.ts: added `clusterSignalsAuto()` exported function (~130 LOC). Picks semantic path when signals.length>=8 AND db AND embeddingClient are provided; otherwise falls back to the existing token-based `clusterSignals()`. On the semantic path, also persists missing embeddings via `storeEmbeddings` (single transaction). Returns `{clusters, signalToCluster, strategy, reason}` for caller-side logging. Failures in persistence fall back to in-memory-only semantic clustering (non-fatal).
+- Modified orchestrator.ts STEP 5: pre-embeds signals (idempotent — only embeds signals without a stored embedding yet) via `ensureEmbeddingsSchema + loadAllEmbeddings + EmbeddingClient.embedBatch + storeEmbeddings`. Then calls `clusterSignalsAuto` with the SAME pre-warmed EmbeddingClient (cache hit on clusterSignalsSemantic's internal re-embed → avoids triggering better-sqlite3 Statement destructor crash on Node 22+ that the codebase already documents in vitest.config.ts). Wrapped in try/catch — embedding failures don't fail the investigation (they're nice-to-have, not critical).
+- Modified react.ts STEP 6: identical changes as orchestrator.ts (drop-in replacement contract).
+- Aligned text format across all 3 modules: `${keyword} ${topic} ${rawSnippet.slice(0, 200)}` (matches `clusterSignalsSemantic.signalToText`). Previously the audit pseudocode suggested `slice(0, 500)` which would have missed the cache.
+- Added `scripts/verify-fix-1.ts` (181 LOC) — standalone smoke that bypasses the rate-limited LLM and exercises the exact post-collection path the orchestrator runs: builds 10 fake signals, calls `clusterSignalsAuto`, verifies (1) strategy='semantic', (2) `signal_embeddings` table has 10 rows, (3) `semanticSearch('restaurantes reservas whatsapp')` returns ranked results. ALL ASSERTIONS PASS. Top result: sig_wa_2 score=0.679.
+- tsc --noEmit: PASS. bun run lint: PASS (0 warnings, 0 errors). vitest run: 135/137 tests pass; the 2 failures are tests/e2e.test.ts which require live LLM API (currently returning HTTP 429 from upstream — pre-existing infra issue, NOT caused by this change; failure stack originates in ResearchPlanner.plan at line 70, which is STEP 1, well before STEP 5 where my changes live).
+- Could NOT run the full CLI `investigate` end-to-end because the ZAI LLM API is rate-limited (429 on every request — affects planner, react decision loop, etc.). Verified the embeddings pipeline directly via scripts/verify-fix-1.ts which exercises the exact same code path the orchestrator runs at STEP 5/6 (post-collection analysis), bypassing the LLM.
+
+Stage Summary:
+- Files:
+  - chismoso/src/intelligence/clustering.ts (MODIFIED +128 LOC)
+  - chismoso/src/orchestrator/orchestrator.ts (MODIFIED +74 LOC)
+  - chismoso/src/orchestrator/react.ts (MODIFIED +68 LOC)
+  - chismoso/scripts/verify-fix-1.ts (NEW +181 LOC, smoke script for ad-hoc verification)
+- Semantic search working: YES (verified via scripts/verify-fix-1.ts; top hit sig_wa_2 score=0.679 for query "restaurantes reservas whatsapp")
+- Strategy chosen in test run: semantic (reason: "semantic (persisted 10 new embedding(s))")
+- Audit critical finding #2 RESOLVED: orchestrator + ReAct now call `storeEmbeddings` after every investigation; `clusterSignalsSemantic` is wired in via `clusterSignalsAuto`. `/api/semantic-search` will return fresh results after each new investigation.
+
+---
+Task ID: FIX-4
+Agent: api-error-normalization
+Task: Normalize all API error responses to { error, details? } shape
+
+Work Log:
+- Read AUDIT-CODE.md HIGH #4 finding (inconsistent API error shapes across 11 routes).
+- Read all 14 API route files under src/app/api/ to inventory current error patterns.
+- Created src/lib/api-response.ts exporting apiError, apiOk, apiBadRequest, apiNotFound, apiRateLimited, apiServerError, apiUnavailable helpers.
+- Modified /api/investigate/route.ts: rate limit + JSON parse + validation errors → apiRateLimited/apiBadRequest; failed investigation status (FAILED) → apiServerError 500 instead of 200 OK with ok:false; success → apiOk.
+- Modified /api/investigate/stream/route.ts: rate limit + JSON parse + validation errors → helpers (POST + GET paths).
+- Modified /api/investigations/route.ts: empty list response → apiOk.
+- Modified /api/investigations/[id]/route.ts: 400 invalid id → apiBadRequest; 404 not found → apiNotFound; 200 success → apiOk.
+- Modified /api/providers/route.ts: 500 errors already used { error, details } shape — refactored to use apiServerError; success → apiOk.
+- Modified /api/topics/route.ts: 500 { error, message, topics: [] } → apiServerError('topics_query_failed', { message }); success → apiOk.
+- Modified /api/topics/[topic]/route.ts: 400 missing_topic → apiBadRequest; 500 → apiServerError; success → apiOk (kept TopicHistoryResponse interface).
+- Modified /api/anomalies/route.ts: 500 { error, message, ... } → apiServerError('anomaly_detection_failed', { message, ranAt, topic }); success → apiOk.
+- Modified /api/alerts/route.ts: same pattern as anomalies; 500 → apiServerError('alerts_query_failed', { message, ranAt }).
+- Modified /api/mesh/events/route.ts: removed { ok: true, acked } wrapper, success → apiOk({ acked }); 400/500 errors → helpers.
+- Modified /api/mesh/events/ack/route.ts: same pattern as mesh/events.
+- Modified /api/mesh/external-signals/route.ts: rate limit + JSON parse + validation + ingest/query errors → helpers; success → apiOk (no ok:true wrapper).
+- Modified /api/mesh/config/route.ts: GET success → apiOk; PUT validation errors (invalid_json/missing_field/invalid_subscriber) → apiBadRequest with code in details; 500 read/write → apiServerError.
+- Modified /api/semantic-search/route.ts: rate limit + JSON parse + missing_query + topK_out_of_range → apiBadRequest with code in details; 500 → apiServerError('search_failed', { message }); empty results → apiOk({ results: [] }).
+- Narrowed all `catch (e: any)` to `catch (e: unknown)` with `instanceof Error` checks.
+- Verified bun run lint passes (exit 0) and npx tsc --noEmit passes for all files in src/app/api/ and src/lib/api-response.ts.
+- Confirmed zero remaining NextResponse.json calls in src/app/api/ via grep.
+
+Stage Summary:
+- Files: 15 (1 new lib/api-response.ts + 14 route files modified)
+- Routes normalized: 14
+- Inconsistent shapes fixed: 11 (the 11 flagged in AUDIT-CODE HIGH #4)

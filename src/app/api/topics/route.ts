@@ -1,10 +1,12 @@
-import { NextResponse } from 'next/server';
-import Database from 'better-sqlite3';
+import { chismosoDb } from '@/lib/db-chismoso';
+import { apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+// Singleton DB connection — see src/lib/db-chismoso.ts.
+// Opening a fresh `new Database()` per request was the bottleneck here
+// (~10–50ms per open). Now the connection is reused across all requests.
 
 interface TopicRow {
   canonical: string;
@@ -43,9 +45,8 @@ interface TopicListItem {
  *   }
  */
 export async function GET() {
-  let db: Database.Database | null = null;
   try {
-    db = new Database(DB_PATH, { readonly: true });
+    const db = chismosoDb;
     // We use a correlated subquery to grab the most recent observation per
     // topic — this avoids a JOIN that would multiply rows.
     const rows = db.prepare(`
@@ -73,19 +74,9 @@ export async function GET() {
       latestConfidence: r.latest_confidence,
     }));
 
-    return NextResponse.json({ topics });
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        error: 'topics_query_failed',
-        message: e?.message ?? String(e),
-        topics: [],
-      },
-      { status: 500 },
-    );
-  } finally {
-    if (db) {
-      try { db.close(); } catch { /* ignore */ }
-    }
+    return apiOk({ topics });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('topics_query_failed', { message });
   }
 }

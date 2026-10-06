@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { openMeshDb, getMeshConfig, setMeshConfig } from '../_mesh-db';
+import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,12 +25,10 @@ export async function GET() {
       eventsFilter: s.eventsFilter,
       active: s.active,
     }));
-    return NextResponse.json({ enabled: cfg.enabled, subscribers: safeSubs });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: 'mesh_config_read_failed', message: e?.message ?? String(e) },
-      { status: 500 },
-    );
+    return apiOk({ enabled: cfg.enabled, subscribers: safeSubs });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('mesh_config_read_failed', { message });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }
@@ -46,42 +45,30 @@ export async function GET() {
  *   chismoso mesh subscribe --agent=NAME --url=URL [--secret=XXX]
  *
  * Body: `{ enabled: boolean, subscribers: Array<{ agentName, webhookUrl, secret?, eventsFilter? }> }`
- * Response: `{ ok: true, enabled, subscribers: number }`
+ * Response: `{ enabled: boolean, subscribers: number }`
  */
 export async function PUT(req: NextRequest) {
   let body: { enabled?: boolean; subscribers?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
-    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+    return apiBadRequest('Invalid JSON body', { code: 'invalid_json' });
   }
   if (typeof body?.enabled !== 'boolean') {
-    return NextResponse.json(
-      { error: 'missing_field', message: 'enabled (boolean) is required' },
-      { status: 400 },
-    );
+    return apiBadRequest('enabled (boolean) is required', { code: 'missing_field' });
   }
   if (!Array.isArray(body.subscribers)) {
-    return NextResponse.json(
-      { error: 'missing_field', message: 'subscribers (array) is required' },
-      { status: 400 },
-    );
+    return apiBadRequest('subscribers (array) is required', { code: 'missing_field' });
   }
   // Validate each subscriber entry.
   const subs: Array<{ agentName: string; webhookUrl: string; secret?: string; eventsFilter?: string[] }> = [];
   for (const raw of body.subscribers) {
     const s = raw as any;
     if (typeof s?.agentName !== 'string' || !s.agentName.trim()) {
-      return NextResponse.json(
-        { error: 'invalid_subscriber', message: 'agentName (string) is required' },
-        { status: 400 },
-      );
+      return apiBadRequest('agentName (string) is required', { code: 'invalid_subscriber' });
     }
     if (typeof s?.webhookUrl !== 'string' || !/^https?:\/\//i.test(s.webhookUrl)) {
-      return NextResponse.json(
-        { error: 'invalid_subscriber', message: `webhookUrl must be a valid http(s) URL (agent: ${s.agentName})` },
-        { status: 400 },
-      );
+      return apiBadRequest(`webhookUrl must be a valid http(s) URL (agent: ${s.agentName})`, { code: 'invalid_subscriber' });
     }
     subs.push({
       agentName: s.agentName,
@@ -95,12 +82,10 @@ export async function PUT(req: NextRequest) {
   try {
     db = openMeshDb();
     setMeshConfig(db, body.enabled, subs);
-    return NextResponse.json({ ok: true, enabled: body.enabled, subscribers: subs.length });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: 'mesh_config_write_failed', message: e?.message ?? String(e) },
-      { status: 500 },
-    );
+    return apiOk({ enabled: body.enabled, subscribers: subs.length });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('mesh_config_write_failed', { message });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }

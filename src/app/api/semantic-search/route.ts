@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
+import type { NextResponse } from 'next/server';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
+import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
+import { validateQuery, validateTopK } from '@/lib/validation';
+import { apiBadRequest, apiOk, apiRateLimited, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,8 +16,6 @@ export const dynamic = 'force-dynamic';
 const DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
 const EMBEDDING_DIM = 256;
 const EMBEDDING_MODEL = 'tfidf-hash-v1';
-const DEFAULT_TOP_K = 10;
-const MAX_TOP_K = 50;
 
 // ---------------------------------------------------------------------------
 // TYPES (mirror chismoso/src/intelligence/semantic-search.ts)
@@ -58,8 +59,8 @@ interface SignalMetaRow {
  *   - snippet: string (raw_snippet from signals table)
  *   - url?: string (if the signal had one)
  *
- * Response 400: { "error": "missing_query" | "topK_out_of_range" | ... }
- * Response 500: { "error": "search_failed", "message": string, "results": [] }
+ * Response 400: { "error": "missing_query" | "topK_out_of_range" | ..., "details": { code: string } }
+ * Response 500: { "error": "search_failed", "details": { message: string } }
  *
  * NOTES
  *   - Reads the CHISMOSO SQLite DB (the same one written by the orchestrator).
@@ -72,33 +73,31 @@ interface SignalMetaRow {
  *     so embeddings written by the orchestrator are directly searchable.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // 0. Rate limit (per-IP, 30/min).
+  const ip = getClientIP(request);
+  const rl = rateLimit(`semanticSearch:${ip}`, LIMITS.semanticSearch);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return apiRateLimited(retryAfter);
+  }
+
   // 1. Parse + validate body.
   let body: { query?: unknown; topK?: unknown };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: 'invalid_json', message: 'Body must be valid JSON.' },
-      { status: 400 },
-    );
+    return apiBadRequest('Body must be valid JSON.', { code: 'invalid_json' });
   }
-  const query = typeof body.query === 'string' ? body.query.trim() : '';
-  if (!query) {
-    return NextResponse.json(
-      { error: 'missing_query', message: 'Body must include a non-empty "query" string.' },
-      { status: 400 },
-    );
+  const queryRes = validateQuery(body.query);
+  if (!queryRes.ok) {
+    return apiBadRequest(queryRes.error ?? 'query is required', { code: 'missing_query' });
   }
-  let topK = DEFAULT_TOP_K;
-  if (body.topK !== undefined) {
-    if (typeof body.topK !== 'number' || !Number.isFinite(body.topK) || body.topK < 1) {
-      return NextResponse.json(
-        { error: 'topK_out_of_range', message: 'topK must be a positive finite number.' },
-        { status: 400 },
-      );
-    }
-    topK = Math.min(Math.floor(body.topK), MAX_TOP_K);
+  const topKRes = validateTopK(body.topK);
+  if (!topKRes.ok) {
+    return apiBadRequest(topKRes.error ?? 'topK invalid', { code: 'topK_out_of_range' });
   }
+  const query = queryRes.value!;
+  const topK = topKRes.value!;
 
   // 2. Open DB readonly. If the embeddings table doesn't exist yet, return
   //    empty results — this is a legitimate "no embeddings have been
@@ -112,7 +111,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
       .get() as { name?: string } | undefined;
     if (!tableRow || tableRow.name !== 'signal_embeddings') {
-      return NextResponse.json({ results: [] });
+      return apiOk({ results: [] });
     }
 
     // 3. Load all stored embeddings.
@@ -123,7 +122,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .all() as EmbeddingRow[];
 
     if (rows.length === 0) {
-      return NextResponse.json({ results: [] });
+      return apiOk({ results: [] });
     }
 
     // 4. Embed the query using the same TF-IDF hash algorithm as the writer.
@@ -143,7 +142,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     if (scored.length === 0) {
-      return NextResponse.json({ results: [] });
+      return apiOk({ results: [] });
     }
 
     // 6. Sort desc, take topK.
@@ -172,13 +171,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    return NextResponse.json({ results });
+    return apiOk({ results });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json(
-      { error: 'search_failed', message, results: [] },
-      { status: 500 },
-    );
+    return apiServerError('search_failed', { message });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }

@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
+import { apiOk } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,7 +40,7 @@ export async function GET() {
   try {
     files = await fs.readdir(OUTPUT_DIR);
   } catch {
-    return NextResponse.json({ investigations: [] });
+    return apiOk({ investigations: [] });
   }
 
   const jsonFiles = files.filter((f) => f.startsWith('report-') && f.endsWith('.json'));
@@ -70,5 +70,5 @@ export async function GET() {
   // Sort by generatedAt desc (most recent first).
   investigations.sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
 
-  return NextResponse.json({ investigations });
+  return apiOk({ investigations });
 }

@@ -1,5 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
+import { apiBadRequest, apiRateLimited } from '@/lib/api-response';
+import {
+  validateObjective,
+  validateGeography,
+  validateMaxQueries,
+  validateMaxRuntimeMs,
+} from '@/lib/validation';
 
 /**
  * SSE streaming endpoint for live investigation progress.
@@ -32,6 +41,13 @@ export const maxDuration = 300;
 
 const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
 
+/**
+ * Pre-compiled CLI is preferred (faster startup — no TS compilation per call).
+ * Falls back to `npx tsx src/cli.ts` when dist/ hasn't been built yet.
+ */
+const COMPILED_CLI = `${CHISMOSO_ROOT}/dist/cli.js`;
+const USE_COMPILED = existsSync(COMPILED_CLI);
+
 interface InvestigateParams {
   objective: string;
   geography: string;
@@ -40,26 +56,38 @@ interface InvestigateParams {
 }
 
 function parseParams(
-  objectiveRaw: string,
-  geographyRaw: string | undefined,
-  maxQueriesRaw: number | undefined,
-  maxRuntimeMsRaw: number | undefined,
+  objectiveRaw: unknown,
+  geographyRaw: unknown,
+  maxQueriesRaw: unknown,
+  maxRuntimeMsRaw: unknown,
 ): { params: InvestigateParams | null; error: string | null } {
-  const objective = (objectiveRaw ?? '').trim();
-  if (!objective) return { params: null, error: 'Missing "objective"' };
-  if (objective.length > 1000) return { params: null, error: 'Objective too long (max 1000 chars)' };
-  const geography = (geographyRaw ?? 'Colombia').trim() || 'Colombia';
-  const maxQueries = Math.min(Math.max(Number(maxQueriesRaw) || 4, 1), 10);
-  const maxRuntimeMs = Math.min(Math.max(Number(maxRuntimeMsRaw) || 180_000, 30_000), 240_000);
-  return { params: { objective, geography, maxQueries, maxRuntimeMs }, error: null };
+  const objectiveRes = validateObjective(objectiveRaw);
+  if (!objectiveRes.ok) return { params: null, error: objectiveRes.error ?? 'invalid objective' };
+  const geographyRes = validateGeography(geographyRaw);
+  if (!geographyRes.ok) return { params: null, error: geographyRes.error ?? 'invalid geography' };
+  const maxQueriesRes = validateMaxQueries(maxQueriesRaw);
+  if (!maxQueriesRes.ok) return { params: null, error: maxQueriesRes.error ?? 'invalid maxQueries' };
+  const maxRuntimeMsRes = validateMaxRuntimeMs(maxRuntimeMsRaw);
+  if (!maxRuntimeMsRes.ok) return { params: null, error: maxRuntimeMsRes.error ?? 'invalid maxRuntimeMs' };
+  return {
+    params: {
+      objective: objectiveRes.value!,
+      geography: geographyRes.value!,
+      maxQueries: maxQueriesRes.value!,
+      maxRuntimeMs: maxRuntimeMsRes.value!,
+    },
+    error: null,
+  };
 }
 
-function runInvestigationStream(params: InvestigateParams): Response {
+function runInvestigationStream(params: InvestigateParams, signal: AbortSignal): Response {
   const { objective, geography, maxQueries, maxRuntimeMs } = params;
 
   // Build CLI args. We pass --save so reports are persisted to disk too.
-  const args = [
-    'src/cli.ts',
+  // When the pre-compiled CLI exists, we invoke `node dist/cli.js ...` (no
+  // TS compilation overhead — ~370ms faster startup than `npx tsx src/cli.ts`).
+  // Otherwise we fall back to the tsx dev runner.
+  const cliArgs = [
     'investigate',
     objective,
     `--geography=${geography}`,
@@ -67,6 +95,10 @@ function runInvestigationStream(params: InvestigateParams): Response {
     `--max-runtime-ms=${maxRuntimeMs}`,
     '--save',
   ];
+  const childCmd = USE_COMPILED ? 'node' : 'npx';
+  const childArgs = USE_COMPILED
+    ? [COMPILED_CLI, ...cliArgs]
+    : ['tsx', 'src/cli.ts', ...cliArgs];
 
   const encoder = new TextEncoder();
 
@@ -96,13 +128,26 @@ function runInvestigationStream(params: InvestigateParams): Response {
 
       send('stage', { stage: 'spawning', objective, geography, maxQueries, maxRuntimeMs });
 
-      const child = spawn('npx', ['tsx', ...args], {
+      const child = spawn(childCmd, childArgs, {
         cwd: CHISMOSO_ROOT,
         // INFO so the logger.info() milestone lines (Clustering complete, Trend
         // detected, etc.) are emitted. They go to stdout as JSON.
         env: { ...process.env, CHISMOSO_LOG_LEVEL: 'INFO' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+
+      // FIX-2 (AUDIT-PERF Critical #5): if the client disconnects (closes
+      // the tab, navigates away, network drops) the request signal fires
+      // 'abort'. We kill the spawned CLI promptly so it stops consuming
+      // provider quota and CPU for a stream no one is reading.
+      const abortListener = () => {
+        try { child.kill('SIGTERM'); } catch { /* ignore */ }
+        // Give it 2s to clean up gracefully, then SIGKILL.
+        setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        }, 2000);
+      };
+      signal.addEventListener('abort', abortListener);
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
@@ -243,6 +288,7 @@ function runInvestigationStream(params: InvestigateParams): Response {
 
       const finalize = (code: number | null) => {
         clearTimeout(timeout);
+        signal.removeEventListener('abort', abortListener);
         // Flush any trailing buffered lines (no final newline).
         if (stdoutBuffer.length > 0) handleLine(stdoutBuffer, 'stdout');
         if (stderrBuffer.length > 0) handleLine(stderrBuffer, 'stderr');
@@ -275,16 +321,24 @@ function runInvestigationStream(params: InvestigateParams): Response {
  * Body: { objective, geography?, maxQueries?, maxRuntimeMs? }
  */
 export async function POST(req: NextRequest) {
+  // --- Rate limit (per-IP, 5/min) ---------------------------------------
+  const ip = getClientIP(req);
+  const rl = rateLimit(`stream:${ip}`, LIMITS.stream);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return apiRateLimited(retryAfter);
+  }
+
   let body: {
-    objective?: string;
-    geography?: string;
-    maxQueries?: number;
-    maxRuntimeMs?: number;
+    objective?: unknown;
+    geography?: unknown;
+    maxQueries?: unknown;
+    maxRuntimeMs?: unknown;
   };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiBadRequest('Invalid JSON body');
   }
   const { params, error } = parseParams(
     body.objective,
@@ -293,9 +347,9 @@ export async function POST(req: NextRequest) {
     body.maxRuntimeMs,
   );
   if (!params) {
-    return NextResponse.json({ error: error ?? 'Invalid params' }, { status: 400 });
+    return apiBadRequest(error ?? 'Invalid params');
   }
-  return runInvestigationStream(params);
+  return runInvestigationStream(params, req.signal);
 }
 
 /**
@@ -305,19 +359,27 @@ export async function POST(req: NextRequest) {
  * The React component InvestigationStream uses this.
  */
 export async function GET(req: NextRequest) {
+  // --- Rate limit (per-IP, 5/min) ---------------------------------------
+  const ip = getClientIP(req);
+  const rl = rateLimit(`stream:${ip}`, LIMITS.stream);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return apiRateLimited(retryAfter);
+  }
+
   const url = new URL(req.url);
-  const objective = url.searchParams.get('objective') ?? '';
+  const objective = url.searchParams.get('objective') ?? undefined;
   const geography = url.searchParams.get('geography') ?? undefined;
   const maxQueriesRaw = url.searchParams.get('maxQueries');
   const maxRuntimeMsRaw = url.searchParams.get('maxRuntimeMs');
   const { params, error } = parseParams(
     objective,
     geography,
-    maxQueriesRaw ? Number(maxQueriesRaw) : undefined,
-    maxRuntimeMsRaw ? Number(maxRuntimeMsRaw) : undefined,
+    maxQueriesRaw ?? undefined,
+    maxRuntimeMsRaw ?? undefined,
   );
   if (!params) {
-    return NextResponse.json({ error: error ?? 'Invalid params' }, { status: 400 });
+    return apiBadRequest(error ?? 'Invalid params');
   }
-  return runInvestigationStream(params);
+  return runInvestigationStream(params, req.signal);
 }

@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { openMeshDb, ackEvents } from '../../_mesh-db';
+import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,29 +12,27 @@ export const dynamic = 'force-dynamic';
  * updated (rows that existed and were pending).
  *
  * Body: `{ ids: string[] }`
- * Response: `{ ok: true, acked: number }`
+ * Response: `{ acked: number }`
  */
 export async function POST(req: NextRequest) {
   let body: { ids?: string[] };
   try {
     body = (await req.json()) as { ids?: string[] };
   } catch {
-    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+    return apiBadRequest('Invalid JSON body', { code: 'invalid_json' });
   }
   const ids = Array.isArray(body?.ids) ? body!.ids!.filter((x): x is string => typeof x === 'string') : [];
   if (ids.length === 0) {
-    return NextResponse.json({ ok: true, acked: 0 });
+    return apiOk({ acked: 0 });
   }
   let db: ReturnType<typeof openMeshDb> | null = null;
   try {
     db = openMeshDb();
     const acked = ackEvents(db, ids);
-    return NextResponse.json({ ok: true, acked });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: 'mesh_ack_failed', message: e?.message ?? String(e) },
-      { status: 500 },
-    );
+    return apiOk({ acked });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('mesh_ack_failed', { message });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }

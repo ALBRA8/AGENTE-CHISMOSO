@@ -1,63 +1,81 @@
 /**
  * Shared mesh SQLite helper for the Next.js API routes.
  *
- * We open a SEPARATE better-sqlite3 connection to the CHISMOSO database
- * (in WAL mode this is safe — SQLite supports concurrent readers/writers
- * across connections). All mesh tables live in the same DB file as the
- * rest of CHISMOSO; this helper ensures they exist (idempotent) before
- * the route handlers read/write them.
+ * FIX-2 (AUDIT-PERF Critical #2 + Bonus): previously every mesh route
+ * (`/api/mesh/config`, `/api/mesh/events`, `/api/mesh/external-signals`)
+ * called `openMeshDb()` which instantiated a fresh `MeshDB` per request,
+ * costing ~10–50ms per connection open. Now we expose a single process-wide
+ * `Database` instance.
  *
- * The mesh protocol (publish/consume/ack/deliver logic) lives in the
- * CHISMOSO package; the Next.js routes are THIN HTTP wrappers around
- * direct SQL — they DO NOT duplicate the publish/subscribe semantics,
- * they only expose the raw outbox/inbox tables for external agents
- * (which is what an external agent like AGENTE-LEADS would consume).
+ * The mesh route handlers all call `db.close()` in a `finally` block. To
+ * keep them as drop-in callers without modification, we override `close`
+ * on the singleton instance so it becomes a no-op — the connection lives
+ * for the lifetime of the Next.js process.
+ *
+ * Bonus fix (AUDIT-PERF Bonus): mkdirSync the parent directory before
+ * opening the connection, so `/api/mesh/config` no longer 500s on a
+ * fresh install where `chismoso/data/` doesn't exist yet.
+ *
+ * The canonical `MeshDB` class (which sets up the 4 mesh tables + WAL)
+ * is imported from the precompiled `chismoso/dist/mesh/db.js`. Its
+ * constructor already does `mkdirSync`, but we replicate it here as
+ * defense in depth — if a future refactor changes the chismoso MeshDB
+ * to skip mkdirSync, this side still works.
  */
 
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+// Import the canonical MeshDB (compiled JS + sibling .d.ts map).
+// Path is relative to this file: src/app/api/mesh/_mesh-db.ts
+//   → ../../../../chismoso/dist/mesh/db.js
+import { MeshDB, DEFAULT_MESH_DB_PATH } from '../../../../chismoso/dist/mesh/db.js';
+// Silence chismoso's structured logger on every request — MeshDB's constructor
+// logs an INFO line on each instantiation, which is too noisy for a per-request
+// helper. This is a global change but safe: chismoso code does not run
+// independently inside the Next.js process.
+import { logger as chismosoLogger, LogLevel } from '../../../../chismoso/dist/logger.js';
+chismosoLogger.setLevel(LogLevel.WARN);
 
-const MESH_DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+// Re-export so callers don't hardcode the path.
+export { DEFAULT_MESH_DB_PATH };
 
-const MESH_SCHEMA = `
-CREATE TABLE IF NOT EXISTS mesh_outbox (
-  id                  TEXT PRIMARY KEY,
-  opportunity_id      TEXT NOT NULL,
-  agent_target        TEXT NOT NULL,
-  payload_json        TEXT NOT NULL,
-  created_at          TEXT NOT NULL,
-  delivered_at        TEXT,
-  delivery_attempts   INTEGER DEFAULT 0,
-  last_error          TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_mesh_outbox_agent_delivered ON mesh_outbox(agent_target, delivered_at);
-CREATE INDEX IF NOT EXISTS idx_mesh_outbox_created ON mesh_outbox(created_at);
+// ---------------------------------------------------------------------------
+// Singleton Database — survives HMR, never closed
+// ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS external_signals (
-  id            TEXT PRIMARY KEY,
-  source_agent  TEXT NOT NULL,
-  signal_type   TEXT NOT NULL,
-  payload_json  TEXT NOT NULL,
-  received_at   TEXT NOT NULL,
-  consumed_at   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_external_signals_consumed ON external_signals(consumed_at);
-CREATE INDEX IF NOT EXISTS idx_external_signals_received ON external_signals(received_at);
+// Ensure parent dir exists before opening — fixes the 500 on /api/mesh/config
+// when chismoso hasn't been run yet.
+mkdirSync(dirname(DEFAULT_MESH_DB_PATH), { recursive: true });
 
-CREATE TABLE IF NOT EXISTS mesh_subscribers (
-  id             TEXT PRIMARY KEY,
-  agent_name     TEXT NOT NULL UNIQUE,
-  webhook_url    TEXT NOT NULL,
-  secret         TEXT,
-  events_filter  TEXT,
-  active         INTEGER DEFAULT 1,
-  created_at     TEXT NOT NULL
-);
+// Use globalThis to survive Next.js HMR in dev (a fresh module graph would
+// otherwise re-instantiate MeshDB and leak file descriptors).
+const globalForMeshDb = globalThis as unknown as {
+  __meshDb?: Database.Database;
+};
 
-CREATE TABLE IF NOT EXISTS mesh_meta (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-`;
+function createMeshDb(): Database.Database {
+  const meshDb = new MeshDB(DEFAULT_MESH_DB_PATH);
+  const raw = meshDb.raw;
+  // Override `close` on the instance so route handlers that call
+  // `db.close()` in a `finally` block don't kill the singleton. This is
+  // safe because:
+  //   - `close` is on Database.prototype; assigning an own property on the
+  //     instance shadows it.
+  //   - better-sqlite3's Database is a normal JS class — instance own
+  //     properties work as expected.
+  (raw as unknown as { close: () => void }).close = () => {
+    /* no-op — singleton lives for the process lifetime */
+  };
+  return raw;
+}
+
+const meshDbSingleton: Database.Database =
+  globalForMeshDb.__meshDb ?? createMeshDb();
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForMeshDb.__meshDb = meshDbSingleton;
+}
 
 export interface MeshOpportunityEvent {
   id: string;
@@ -98,14 +116,16 @@ export interface MeshStatus {
 }
 
 /**
- * Open a connection to the CHISMOSO DB with the mesh tables ensured.
- * Caller MUST call `db.close()` (typically in a `finally` block).
+ * Return the shared mesh DB connection (singleton). The returned object's
+ * `close()` method is a no-op, so callers that follow the standard
+ * `try { db = openMeshDb(); ... } finally { db.close(); }` pattern will
+ * NOT close the shared connection.
+ *
+ * Implementation note: we instantiate a chismoso `MeshDB` (which sets up
+ * the schema + WAL pragma) and return its raw `better-sqlite3` handle.
  */
 export function openMeshDb(): Database.Database {
-  const db = new Database(MESH_DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.exec(MESH_SCHEMA);
-  return db;
+  return meshDbSingleton;
 }
 
 export function generateId(prefix: string): string {

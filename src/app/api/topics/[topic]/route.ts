@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import Database from 'better-sqlite3';
+import { NextRequest } from 'next/server';
+import { chismosoDb } from '@/lib/db-chismoso';
+import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+// Singleton DB connection — see src/lib/db-chismoso.ts.
 
 interface ObservationRow {
   observed_at: string;
@@ -65,10 +66,7 @@ export async function GET(
   const { topic: rawTopic } = await params;
   const topic = decodeURIComponent(rawTopic);
   if (!topic) {
-    return NextResponse.json(
-      { error: 'missing_topic', message: 'Topic segment is required' },
-      { status: 400 },
-    );
+    return apiBadRequest('Topic segment is required', { code: 'missing_topic' });
   }
 
   const url = new URL(req.url);
@@ -77,9 +75,8 @@ export async function GET(
     ? Math.min(limitArg, 200)
     : 30;
 
-  let db: Database.Database | null = null;
   try {
-    db = new Database(DB_PATH, { readonly: true });
+    const db = chismosoDb;
     // Use parameter binding for the topic — topics come from user-controlled
     // canonical strings, so we must defend against SQL injection even though
     // they are not user-input in the traditional sense.
@@ -102,20 +99,9 @@ export async function GET(
     }));
 
     const body: TopicHistoryResponse = { topic, history };
-    return NextResponse.json(body);
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        error: 'topic_history_query_failed',
-        message: e?.message ?? String(e),
-        topic,
-        history: [],
-      },
-      { status: 500 },
-    );
-  } finally {
-    if (db) {
-      try { db.close(); } catch { /* ignore */ }
-    }
+    return apiOk(body);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('topic_history_query_failed', { message, topic });
   }
 }

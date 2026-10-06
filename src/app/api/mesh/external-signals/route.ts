@@ -1,5 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { openMeshDb, ingestExternalSignal, fetchExternalSignals } from '../_mesh-db';
+import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
+import { validateMeshPayload } from '@/lib/validation';
+import { apiBadRequest, apiOk, apiRateLimited, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,40 +15,37 @@ export const dynamic = 'force-dynamic';
  * up unconsumed signals on its next run.
  *
  * Body: `{ source_agent: string, signal_type: string, payload: any }`
- * Response: `{ ok: true, id: string, received_at: string }`
+ * Response: `{ id: string, received_at: string }`
  */
 export async function POST(req: NextRequest) {
-  let body: { source_agent?: string; signal_type?: string; payload?: unknown };
+  // --- Rate limit (per-IP, 60/min) -------------------------------------
+  const ip = getClientIP(req);
+  const rl = rateLimit(`meshPost:${ip}`, LIMITS.meshPost);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return apiRateLimited(retryAfter);
+  }
+
+  let body: unknown;
   try {
-    body = (await req.json()) as typeof body;
+    body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+    return apiBadRequest('Invalid JSON body', { code: 'invalid_json' });
   }
-  const sourceAgent = (body?.source_agent ?? '').trim();
-  const signalType = (body?.signal_type ?? '').trim();
-  if (!sourceAgent || !signalType) {
-    return NextResponse.json(
-      { error: 'missing_fields', message: 'source_agent and signal_type are required' },
-      { status: 400 },
-    );
+  const payloadRes = validateMeshPayload(body);
+  if (!payloadRes.ok) {
+    return apiBadRequest(payloadRes.error ?? 'invalid body', { code: 'invalid_payload' });
   }
-  if (sourceAgent.length > 100 || signalType.length > 100) {
-    return NextResponse.json(
-      { error: 'field_too_long', message: 'source_agent and signal_type must be ≤ 100 chars' },
-      { status: 400 },
-    );
-  }
+  const { sourceAgent, signalType, payload } = payloadRes.value!;
 
   let db: ReturnType<typeof openMeshDb> | null = null;
   try {
     db = openMeshDb();
-    const result = ingestExternalSignal(db, sourceAgent, signalType, body?.payload);
-    return NextResponse.json({ ok: true, ...result });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: 'mesh_signal_ingest_failed', message: e?.message ?? String(e) },
-      { status: 500 },
-    );
+    const result = ingestExternalSignal(db, sourceAgent, signalType, payload);
+    return apiOk(result);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('mesh_signal_ingest_failed', { message });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }
@@ -72,12 +72,10 @@ export async function GET(req: NextRequest) {
   try {
     db = openMeshDb();
     const signals = fetchExternalSignals(db, limit, unconsumedOnly);
-    return NextResponse.json({ count: signals.length, signals });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: 'mesh_signals_query_failed', message: e?.message ?? String(e) },
-      { status: 500 },
-    );
+    return apiOk({ count: signals.length, signals });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('mesh_signals_query_failed', { message });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }

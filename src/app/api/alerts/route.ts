@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import {
   detectAnomalies,
   type Anomaly,
   type AnomalyDetectorConfig,
   DEFAULT_ANOMALY_CONFIG,
 } from '@/lib/anomaly-detector';
+import { apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,22 +69,14 @@ export async function GET(req: NextRequest) {
       return Math.abs(b.zscore) - Math.abs(a.zscore);
     });
 
-    return NextResponse.json({
+    return apiOk({
       ranAt: new Date().toISOString(),
       count: alerts.length,
       alerts,
       config: { ...DEFAULT_ANOMALY_CONFIG, ...config },
     });
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        error: 'alerts_query_failed',
-        message: e?.message ?? String(e),
-        ranAt: new Date().toISOString(),
-        count: 0,
-        alerts: [],
-      },
-      { status: 500 },
-    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('alerts_query_failed', { message, ranAt: new Date().toISOString() });
   }
 }

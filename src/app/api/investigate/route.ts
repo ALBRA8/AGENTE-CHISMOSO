@@ -1,7 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
+import {
+  apiBadRequest,
+  apiOk,
+  apiRateLimited,
+  apiServerError,
+} from '@/lib/api-response';
+import {
+  validateObjective,
+  validateGeography,
+  validateMaxQueries,
+  validateMaxRuntimeMs,
+} from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,11 +24,18 @@ export const maxDuration = 300;
 const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
 const OUTPUT_DIR = '/home/z/my-project/download/chismoso';
 
+/**
+ * Pre-compiled CLI is preferred (faster startup — no TS compilation per call).
+ * Falls back to `npx tsx src/cli.ts` when dist/ hasn't been built yet.
+ */
+const COMPILED_CLI = `${CHISMOSO_ROOT}/dist/cli.js`;
+const USE_COMPILED = existsSync(COMPILED_CLI);
+
 interface InvestigateBody {
-  objective: string;
-  geography?: string;
-  maxQueries?: number;
-  maxRuntimeMs?: number;
+  objective: unknown;
+  geography?: unknown;
+  maxQueries?: unknown;
+  maxRuntimeMs?: unknown;
 }
 
 interface ChismosoReport {
@@ -35,28 +56,49 @@ interface ChismosoReport {
  * preview environment supports up to 5 min request duration.
  */
 export async function POST(req: NextRequest) {
+  // --- Rate limit (per-IP, 5/min) ---------------------------------------
+  const ip = getClientIP(req);
+  const rl = rateLimit(`investigate:${ip}`, LIMITS.investigate);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return apiRateLimited(retryAfter);
+  }
+
+  // --- Parse body ------------------------------------------------------
   let body: InvestigateBody;
   try {
     body = (await req.json()) as InvestigateBody;
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiBadRequest('Invalid JSON body');
   }
 
-  const objective = (body.objective ?? '').trim();
-  if (!objective) {
-    return NextResponse.json({ error: 'Missing "objective"' }, { status: 400 });
+  // --- Validate inputs -------------------------------------------------
+  const objectiveRes = validateObjective(body.objective);
+  if (!objectiveRes.ok) {
+    return apiBadRequest(objectiveRes.error!);
   }
-  if (objective.length > 1000) {
-    return NextResponse.json({ error: 'Objective too long (max 1000 chars)' }, { status: 400 });
+  const geographyRes = validateGeography(body.geography);
+  if (!geographyRes.ok) {
+    return apiBadRequest(geographyRes.error!);
   }
-
-  const geography = (body.geography ?? 'Colombia').trim() || 'Colombia';
-  const maxQueries = Math.min(Math.max(body.maxQueries ?? 4, 1), 10);
-  const maxRuntimeMs = Math.min(Math.max(body.maxRuntimeMs ?? 180_000, 30_000), 240_000);
+  const maxQueriesRes = validateMaxQueries(body.maxQueries);
+  if (!maxQueriesRes.ok) {
+    return apiBadRequest(maxQueriesRes.error!);
+  }
+  const maxRuntimeMsRes = validateMaxRuntimeMs(body.maxRuntimeMs);
+  if (!maxRuntimeMsRes.ok) {
+    return apiBadRequest(maxRuntimeMsRes.error!);
+  }
+  const objective = objectiveRes.value!;
+  const geography = geographyRes.value!;
+  const maxQueries = maxQueriesRes.value!;
+  const maxRuntimeMs = maxRuntimeMsRes.value!;
 
   // Build CLI args. We pass --save so reports are persisted to disk too.
-  const args = [
-    'src/cli.ts',
+  // When the pre-compiled CLI exists, we invoke `node dist/cli.js ...` (no
+  // TS compilation overhead — ~370ms faster startup than `npx tsx src/cli.ts`).
+  // Otherwise we fall back to the tsx dev runner.
+  const cliArgs = [
     'investigate',
     objective,
     `--geography=${geography}`,
@@ -65,10 +107,15 @@ export async function POST(req: NextRequest) {
     '--save',
   ];
 
-  // Spawn tsx as a child process. Capture stdout (markdown report) and stderr (logs).
+  const childCmd = USE_COMPILED ? 'node' : 'npx';
+  const childArgs = USE_COMPILED
+    ? [COMPILED_CLI, ...cliArgs]
+    : ['tsx', 'src/cli.ts', ...cliArgs];
+
+  // Spawn child process. Capture stdout (markdown report) and stderr (logs).
   const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
     (resolve) => {
-      const child = spawn('npx', ['tsx', ...args], {
+      const child = spawn(childCmd, childArgs, {
         cwd: CHISMOSO_ROOT,
         env: { ...process.env, CHISMOSO_LOG_LEVEL: 'WARN' },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -82,18 +129,36 @@ export async function POST(req: NextRequest) {
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
-      child.on('close', (code) => {
-        resolve({ stdout, stderr, code });
-      });
-      child.on('error', (err) => {
-        resolve({ stdout, stderr: stderr + '\n' + (err?.message ?? String(err)), code: -1 });
-      });
+
+      // FIX-2 (AUDIT-PERF Critical #5): if the client disconnects (closes
+      // the tab, navigates away, network drops) the request signal fires
+      // 'abort'. Without this handler the spawned chismoso CLI would keep
+      // running for up to maxRuntimeMs + 30s — consuming provider quota
+      // and CPU for a response no one will ever read. We kill it promptly.
+      const abortListener = () => {
+        try { child.kill('SIGTERM'); } catch { /* ignore */ }
+        // Give it 2s to clean up gracefully, then SIGKILL.
+        setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        }, 2000);
+      };
+      req.signal.addEventListener('abort', abortListener);
 
       // Safety timeout — kill the child if it exceeds maxRuntimeMs + 30s grace.
       const timeout = setTimeout(() => {
         try { child.kill('SIGTERM'); } catch { /* ignore */ }
       }, maxRuntimeMs + 30_000);
-      child.on('close', () => clearTimeout(timeout));
+
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        req.signal.removeEventListener('abort', abortListener);
+        resolve({ stdout, stderr, code });
+      });
+      child.on('error', (err) => {
+        clearTimeout(timeout);
+        req.signal.removeEventListener('abort', abortListener);
+        resolve({ stdout, stderr: stderr + '\n' + (err?.message ?? String(err)), code: -1 });
+      });
     },
   );
 
@@ -151,13 +216,26 @@ export async function POST(req: NextRequest) {
     machine,
   };
 
-  return NextResponse.json({
-    ok: result.code === 0 || status === 'COMPLETED' || status === 'PARTIAL' || status === 'INSUFFICIENT_EVIDENCE',
+  const isOk =
+    result.code === 0 ||
+    status === 'COMPLETED' ||
+    status === 'PARTIAL' ||
+    status === 'INSUFFICIENT_EVIDENCE';
+
+  const payload = {
     status,
     investigationId,
     counts,
     report,
     // Include the last 200 lines of stderr for debugging (so user can see what providers did).
     log: result.stderr.split('\n').slice(-200).join('\n'),
-  });
+  };
+
+  // Investigation genuinely failed (CLI exit non-zero AND status not in the
+  // success-like set) → 500 with canonical error shape. Successful or
+  // soft-state (PARTIAL / INSUFFICIENT_EVIDENCE) results stay 200.
+  if (!isOk) {
+    return apiServerError('Investigation failed', payload);
+  }
+  return apiOk(payload);
 }

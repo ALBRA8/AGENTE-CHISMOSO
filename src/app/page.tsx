@@ -38,6 +38,8 @@ import {
 import { InvestigationStream } from '@/components/investigation-stream';
 import { AnomalyAlerts } from '@/components/anomaly-alerts';
 import { TopicsEvolution } from '@/components/topics-evolution';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
+import { DashboardSummary } from '@/components/dashboard-summary';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1050,7 +1052,9 @@ export default function Home() {
                   </TabsContent>
 
                   <TabsContent value="markdown" className="mt-3">
-                    <MarkdownView markdown={result.report.markdown} />
+                    <div className="rounded-lg border bg-card p-4 overflow-x-auto">
+                      <MarkdownRenderer markdown={result.report.markdown} />
+                    </div>
                   </TabsContent>
                 </Tabs>
 
@@ -1070,18 +1074,8 @@ export default function Home() {
               </div>
             )}
 
-            {!result && !loading && (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <Radar className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground">
-                    Escribe un objetivo arriba o carga una investigación previa →
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/60 mt-1">
-                    CHISMOSO observará el entorno digital, identificará señales tempranas, las convertirá en inteligencia estructurada y detectará oportunidades antes que sean obvias.
-                  </p>
-                </CardContent>
-              </Card>
+            {!result && !loading && !streaming && (
+              <DashboardSummary />
             )}
           </div>
 

@@ -15,9 +15,18 @@
  * explícitamente no introducir infraestructura pesada sin necesidad.
  */
 
+import type { Database as BetterSqlite3Database } from 'better-sqlite3';
 import type { Signal, TopicCluster } from '../models.js';
 import { generateId, nowISO } from '../models.js';
 import { normalizeText, tokenize } from './normalizer.js';
+import { clusterSignalsSemantic } from './semantic-cluster.js';
+import {
+  ensureEmbeddingsSchema,
+  loadAllEmbeddings,
+  storeEmbeddings,
+} from '../db-extensions/embeddings.sql.js';
+import { EmbeddingClient } from './embeddings.js';
+import { logger } from '../logger.js';
 
 export interface ClusterResult {
   clusters: TopicCluster[];
@@ -129,4 +138,123 @@ function pickCanonical(fallback: string, freq: Map<string, number>): string {
     }
   }
   return normalizeText(best).split(' ')[0] || fallback;
+}
+
+// ---------------------------------------------------------------------------
+// AUTO STRATEGY (V1.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Picks the best clustering strategy based on what's available at runtime:
+ *   - If signals.length >= MIN_SIGNALS_FOR_SEMANTIC (8)
+ *     AND opts.db is provided
+ *     AND opts.embeddingClient is provided
+ *     → semantic clustering (`clusterSignalsSemantic`)
+ *   - Otherwise → token-based clustering (`clusterSignals`)
+ *
+ * On the semantic path, also ensures every signal in `signals` has a row in
+ * `signal_embeddings`. Missing embeddings are computed in a single batch
+ * and persisted (idempotent — re-running with the same DB is a no-op).
+ *
+ * Returns the same shape as `clusterSignals`, plus a `strategy` field so
+ * callers (orchestrator, react) can log which path was taken.
+ *
+ * Failures in the embedding layer are NON-FATAL: if `storeEmbeddings` throws
+ * (e.g., readonly DB, schema mismatch), we still proceed with semantic
+ * clustering using in-memory embeddings for the current run. The signal
+ * that something went wrong is the `strategy` field — when persistence
+ * fails, `strategy` stays `'semantic'` but a warning is logged and the
+ * `reason` notes the failure.
+ */
+export const MIN_SIGNALS_FOR_SEMANTIC = 8;
+
+export interface ClusterAutoOptions {
+  db?: BetterSqlite3Database;
+  embeddingClient?: EmbeddingClient;
+}
+
+export interface ClusterAutoResult extends ClusterResult {
+  strategy: 'semantic' | 'token';
+  reason: string;
+}
+
+export async function clusterSignalsAuto(
+  signals: Signal[],
+  opts: ClusterAutoOptions = {},
+): Promise<ClusterAutoResult> {
+  const canUseSemantic =
+    signals.length >= MIN_SIGNALS_FOR_SEMANTIC &&
+    !!opts.db &&
+    !!opts.embeddingClient;
+
+  if (!canUseSemantic) {
+    const result = clusterSignals(signals);
+    const reason = signals.length < MIN_SIGNALS_FOR_SEMANTIC
+      ? `too few signals (${signals.length} < ${MIN_SIGNALS_FOR_SEMANTIC})`
+      : 'no db/embedding client provided';
+    return { ...result, strategy: 'token', reason };
+  }
+
+  // Semantic path. 1) Ensure schema + embeddings persisted.
+  const db = opts.db!;
+  const client = opts.embeddingClient!;
+  let persistenceOk = true;
+  let persistedCount = 0;
+  try {
+    ensureEmbeddingsSchema(db);
+    const existing = new Set(
+      loadAllEmbeddings(db).map((e) => e.signalId),
+    );
+    const toEmbed = signals.filter((s) => !existing.has(s.id));
+    if (toEmbed.length > 0) {
+      // Mirror clusterSignalsSemantic's text format (keyword + topic +
+      // first 200 chars of snippet). This way the EmbeddingClient cache
+      // (per-instance) hits when clusterSignalsSemantic re-embeds for
+      // in-memory clustering — avoiding duplicate CPU work.
+      const texts = toEmbed.map(
+        (s) => `${s.keyword} ${s.topic} ${s.rawSnippet.slice(0, 200)}`,
+      );
+      const vectors = await client.embedBatch(texts);
+      persistedCount = storeEmbeddings(
+        db,
+        toEmbed.map((s, i) => ({ signalId: s.id, embedding: vectors[i] })),
+      );
+      logger.info('clusterSignalsAuto: persisted embeddings', {
+        count: persistedCount,
+        total: toEmbed.length,
+      });
+    }
+  } catch (e: any) {
+    persistenceOk = false;
+    logger.warn('clusterSignalsAuto: embedding persistence failed', {
+      err: e?.message ?? String(e),
+    });
+    // Don't bail — we can still cluster this run using in-memory embeddings.
+  }
+
+  // 2) Run semantic clustering (it re-embeds in-memory; that's fine — the
+  //    EmbeddingClient cache makes it cheap, and semantic-cluster's own
+  //    threshold was tuned for the TF-IDF-hash model).
+  const reason = persistenceOk
+    ? `semantic (persisted ${persistedCount} new embedding(s))`
+    : 'semantic (persistence failed — in-memory only)';
+  try {
+    const sem = await clusterSignalsSemantic(signals, { embeddingClient: client });
+    return {
+      clusters: sem.clusters,
+      signalToCluster: sem.signalToCluster,
+      strategy: 'semantic',
+      reason,
+    };
+  } catch (e: any) {
+    logger.warn('clusterSignalsAuto: semantic clustering failed, falling back to token', {
+      err: e?.message ?? String(e),
+    });
+    const result = clusterSignals(signals);
+    return {
+      ...result,
+      strategy: 'token',
+      reason: `semantic clustering failed: ${e?.message ?? String(e)}`,
+    };
+  }
 }

@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import {
   detectAnomalies,
   type Anomaly,
   type AnomalyDetectorConfig,
   DEFAULT_ANOMALY_CONFIG,
 } from '@/lib/anomaly-detector';
+import { apiOk, apiServerError } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,24 +55,15 @@ export async function GET(req: NextRequest) {
 
   try {
     const anomalies: Anomaly[] = detectAnomalies(topic, config);
-    return NextResponse.json({
+    return apiOk({
       ranAt: new Date().toISOString(),
       topic,
       count: anomalies.length,
       anomalies,
       config: { ...DEFAULT_ANOMALY_CONFIG, ...config },
     });
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        error: 'anomaly_detection_failed',
-        message: e?.message ?? String(e),
-        ranAt: new Date().toISOString(),
-        topic,
-        count: 0,
-        anomalies: [],
-      },
-      { status: 500 },
-    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return apiServerError('anomaly_detection_failed', { message, ranAt: new Date().toISOString(), topic });
   }
 }

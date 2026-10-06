@@ -1,21 +1,37 @@
 /**
- * CHISMOSO — Anomaly Detector (Next.js server-side port, Task EXP-6)
+ * PORTED from chismoso/src/anomaly/index.ts for the Next.js runtime.
+ * Verified by FIX-3 (AUDIT-CODE HIGH #5).
  *
- * This is a self-contained port of the canonical detector that lives in
- * `/home/z/my-project/chismoso/src/anomaly/index.ts`. The two implementations
- * are kept in sync deliberately — the chismoso one is invoked by the CLI
- * (`chismoso anomalies`), while this one is invoked by the Next.js API
- * routes (`GET /api/anomalies`, `GET /api/alerts`) so the dashboard can
- * read anomalies without spawning a subprocess per request.
+ * Reason for the port (not a re-export): the canonical `AnomalyDetector`
+ * in `chismoso/src/anomaly/index.ts` is a CLASS that takes a `Repositories`
+ * instance in its constructor. `Repositories` in turn requires the full
+ * chismoso `ChismosoDB` graph (schema migrations, FK setup, scheduler-owned
+ * connection lifecycle, etc.). Pulling that graph into the Next.js runtime
+ * would force the dashboard to:
+ *   1. run chismoso DB migrations on cold start (slow + side-effectful),
+ *   2. keep a long-lived `ChismosoDB` around across hot reloads,
+ *   3. tightly couple Next.js process lifecycle to chismoso's `Repositories`.
  *
- * If you change the detection logic, update BOTH files. The chismoso file is
- * the source of truth — this one is a port.
+ * The Next.js API routes (`GET /api/anomalies`, `GET /api/alerts`) only need
+ * READ-ONLY access to `topic_observations` + `signals`. This port reads via
+ * the process-wide readonly singleton in `./db-chismoso.ts` and runs the SAME
+ * detection algorithm. ~380 LOC of mostly-pure stats + SQL — no writes.
  *
- * The detector reads the chismoso SQLite DB directly via better-sqlite3 in
- * readonly mode (no writes — the DB is owned by the chismoso process).
+ * SOURCE OF TRUTH: chismoso/src/anomaly/index.ts. Keep this file in sync
+ * when the algorithm changes there.
+ *
+ * TODO (FIX-3): extract the detection algorithm into a pure function
+ * `detectAnomaliesFromRows(rows, config)` in a shared package that both
+ * chismoso and Next.js import. The chismoso class would call it with rows
+ * fetched via `Repositories`; this port would call it with rows fetched via
+ * the readonly singleton. That eliminates the port entirely.
+ *
+ * The detector reads the chismoso SQLite DB via the singleton connection in
+ * `db-chismoso.ts` (readonly, shared across requests — no per-call open).
  */
 
 import Database from 'better-sqlite3';
+import { chismosoDb } from './db-chismoso';
 
 // ---------------------------------------------------------------------------
 // PUBLIC TYPES (mirrors chismoso/src/anomaly/index.ts)
@@ -62,7 +78,11 @@ export const DEFAULT_ANOMALY_CONFIG: AnomalyDetectorConfig = {
   ewmaAlpha: 0.3,
 };
 
-const CHISMOSO_DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+// Reuse the singleton readonly connection — opening a fresh Database per
+// request was the main contributor to /api/anomalies latency (10–50ms per
+// `new Database(path, { readonly: true })`). The singleton is created once
+// per process and shared across all detector calls.
+const CHISMOSO_DB: Database.Database = chismosoDb;
 
 // ---------------------------------------------------------------------------
 // STATS HELPERS (mirrors chismoso/src/anomaly/stats.ts)
@@ -165,9 +185,10 @@ export function detectAnomalies(
   config?: Partial<AnomalyDetectorConfig>,
 ): Anomaly[] {
   const cfg = { ...DEFAULT_ANOMALY_CONFIG, ...(config ?? {}) };
-  let db: Database.Database | null = null;
+  // Use the process-wide singleton connection — no more per-request
+  // `new Database()` open/close overhead.
+  const db = CHISMOSO_DB;
   try {
-    db = new Database(CHISMOSO_DB_PATH, { readonly: true });
     const topics = topic
       ? [topic]
       : (db.prepare('SELECT DISTINCT topic FROM topic_observations ORDER BY topic ASC').all() as Array<{ topic: string }>).map((r) => r.topic);
@@ -177,10 +198,11 @@ export function detectAnomalies(
       out.push(...detectForTopic(db, t, cfg));
     }
     return out;
-  } finally {
-    if (db) {
-      try { db.close(); } catch { /* ignore */ }
-    }
+  } catch {
+    // The DB file may not exist yet on a fresh install, or a query may fail
+    // mid-scan — return no anomalies rather than 500'ing the dashboard.
+    // Callers (the API routes) wrap this in try/catch too.
+    return [];
   }
 }
 

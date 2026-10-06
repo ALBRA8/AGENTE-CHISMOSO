@@ -14,6 +14,7 @@
  */
 
 import { createHmac } from 'node:crypto';
+import { validateOutboundUrl } from './url-validator.js';
 
 export interface WebhookDeliveryInput {
   url: string;
@@ -46,9 +47,19 @@ export async function deliverWebhook(input: WebhookDeliveryInput): Promise<Webho
     return { ok: false, status: 0, error: `payload_serialize_failed: ${e?.message ?? String(e)}` };
   }
 
-  if (!url || !/^https?:\/\//i.test(url)) {
-    return { ok: false, status: 0, error: `invalid_url: ${url}` };
+  if (!url) {
+    return { ok: false, status: 0, error: 'invalid_url: url is empty' };
   }
+
+  // SSRF guard — reject localhost, private IPs, cloud metadata endpoints,
+  // internal TLDs, non-http(s) protocols, userinfo and common DB ports
+  // before we hand the URL to fetch(). See url-validator.ts for the full
+  // block list.
+  const validation = validateOutboundUrl(url);
+  if (!validation.ok || !validation.safeUrl) {
+    return { ok: false, status: 0, error: `URL rejected: ${validation.reason}` };
+  }
+  const safeUrl = validation.safeUrl.toString();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -61,7 +72,7 @@ export async function deliverWebhook(input: WebhookDeliveryInput): Promise<Webho
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(safeUrl, {
       method: 'POST',
       headers,
       body,

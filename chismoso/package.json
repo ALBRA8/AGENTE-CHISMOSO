@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "precompile": "tsc",
+    "precompile:watch": "tsc --watch",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "test": "vitest run",

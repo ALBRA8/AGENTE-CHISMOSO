@@ -213,6 +213,31 @@ CREATE INDEX IF NOT EXISTS idx_topic_obs_topic ON topic_observations(topic);
 CREATE INDEX IF NOT EXISTS idx_topic_obs_time ON topic_observations(observed_at);
 `;
 
+/**
+ * SCHEMA_V2 — performance indexes added after the AUDIT-PERF review.
+ *
+ * Idempotent (`IF NOT EXISTS`) so existing DBs gain the new indexes on the
+ * next CLI run without needing a migration script. These indexes back the
+ * most common dashboard queries:
+ *   - signals(topic, timestamp DESC)  — /api/anomalies source-diversity N+1
+ *   - trends.created_at DESC          — /api/trends "latest" sort
+ *   - problems.created_at DESC        — /api/problems "latest" sort
+ *   - evidence(topic, collected_at)   — evidence timeline lookups
+ *   - provider_runs.investigation_id  — /api/investigations/[id] join
+ *
+ * The same set of indexes is also applied by the Next.js singleton reader
+ * in `src/lib/db-chismoso.ts` so that a fresh dashboard process benefits
+ * even before the CLI runs again.
+ */
+const SCHEMA_V2 = `
+CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp);
+CREATE INDEX IF NOT EXISTS idx_signals_topic_timestamp ON signals(topic, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_trends_created_at ON trends(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_problems_created_at ON problems(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evidence_topic_collected ON evidence(topic, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_runs_investigation ON provider_runs(investigation_id);
+`;
+
 export class ChismosoDB {
   private db: DB;
 
@@ -224,6 +249,7 @@ export class ChismosoDB {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.exec(SCHEMA_V1);
+    this.db.exec(SCHEMA_V2);
     this.db.prepare('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)').run('version', '1.0');
     logger.info('ChismosoDB initialized', { path: config.path });
     openDbs.add(this);

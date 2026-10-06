@@ -50,11 +50,20 @@ import {
   type Trend,
 } from '../models.js';
 import { logger } from '../logger.js';
-import { clusterSignals } from '../intelligence/clustering.js';
+import {
+  clusterSignalsAuto,
+  MIN_SIGNALS_FOR_SEMANTIC,
+} from '../intelligence/clustering.js';
 import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
 import { generateOpportunity } from '../intelligence/opportunities.js';
 import { buildReport } from './reporter.js';
+import { EmbeddingClient } from '../intelligence/embeddings.js';
+import {
+  ensureEmbeddingsSchema,
+  loadAllEmbeddings,
+  storeEmbeddings,
+} from '../db-extensions/embeddings.sql.js';
 
 export interface OrchestratorConfig {
   db: ChismosoDB;
@@ -216,8 +225,67 @@ export class Orchestrator {
       investigation.signalsFound = signals.length;
       investigation.evidenceFound = evidence.length;
 
-      const { clusters, signalToCluster } = clusterSignals(signals);
-      logger.info('Clustering complete', { clusters: clusters.length, signals: signals.length });
+      // Embed signals for semantic search (idempotent — only embeds signals
+      // without an embedding yet). V1.1 fix: previously this was only done
+      // by a one-shot seed script, so /api/semantic-search went stale the
+      // moment a new investigation ran.
+      //
+      // We create ONE EmbeddingClient and reuse it for clusterSignalsAuto
+      // below. The cache on that client means clusterSignalsSemantic (called
+      // inside clusterSignalsAuto) hits the cache instead of re-doing the
+      // TF-IDF-hash CPU work, which avoids triggering a major GC during the
+      // better-sqlite3 Statement lifecycle (see vitest.config.ts for the
+      // codebase's own acknowledgement of this Node+sqlite3 teardown issue).
+      //
+      // Note: clusterSignalsAuto will ALSO ensure embeddings on its semantic
+      // path, but we keep this explicit pre-step so that when we fall back
+      // to token-based clustering (e.g. < 8 signals), the embeddings are
+      // STILL persisted — semantic search needs them regardless of which
+      // clustering strategy was chosen.
+      const embeddingClient = new EmbeddingClient();
+      try {
+        const db = this.cfg.db.raw;
+        ensureEmbeddingsSchema(db);
+        const existing = new Set(
+          loadAllEmbeddings(db).map((e) => e.signalId),
+        );
+        const toEmbed = signals.filter((s) => !existing.has(s.id));
+        if (toEmbed.length > 0) {
+          // Mirror clusterSignalsSemantic's text format (keyword + topic +
+          // first 200 chars of snippet) so the EmbeddingClient cache hits
+          // when clusterSignalsSemantic re-embeds for in-memory clustering.
+          const texts = toEmbed.map(
+            (s) => `${s.keyword} ${s.topic} ${s.rawSnippet.slice(0, 200)}`,
+          );
+          const vectors = await embeddingClient.embedBatch(texts);
+          storeEmbeddings(
+            db,
+            toEmbed.map((s, i) => ({ signalId: s.id, embedding: vectors[i] })),
+          );
+          logger.info('Embeddings generated', {
+            count: toEmbed.length,
+            investigationId,
+          });
+        }
+      } catch (e: any) {
+        logger.warn('Embedding generation failed', {
+          err: e?.message ?? String(e),
+        });
+        // Don't fail the investigation — embeddings are nice-to-have.
+      }
+
+      const { clusters, signalToCluster, strategy, reason } =
+        await clusterSignalsAuto(signals, {
+          db: this.cfg.db.raw,
+          embeddingClient,
+        });
+      logger.info('Clustering complete', {
+        clusters: clusters.length,
+        signals: signals.length,
+        strategy,
+        reason,
+        semanticEligible: signals.length >= MIN_SIGNALS_FOR_SEMANTIC,
+      });
 
       const trends: Trend[] = [];
       const problems: Problem[] = [];

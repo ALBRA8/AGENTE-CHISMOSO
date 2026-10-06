@@ -19,4 +19,15 @@ export default defineConfig({
     fileParallelism: false,
     isolate: false,
   },
+  // CHISMOSO tests are pure TypeScript — no CSS needed. Vite's default
+  // behavior walks up from the test file looking for a postcss.config.*,
+  // which finds the parent Next.js project's config (with the Tailwind v4
+  // plugin that this older vite doesn't recognize as a string). Provide an
+  // empty inline PostCSS config so vite doesn't try to resolve it.
+  css: {
+    postcss: {
+      plugins: [],
+    },
+  },
 });
+

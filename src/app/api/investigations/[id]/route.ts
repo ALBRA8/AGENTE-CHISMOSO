@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { apiBadRequest, apiNotFound, apiOk } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,11 +19,25 @@ export async function GET(
 ) {
   const { id } = await params;
   if (!id || !/^[\w-]+$/.test(id)) {
-    return NextResponse.json({ error: 'Invalid investigation ID' }, { status: 400 });
+    return apiBadRequest('Invalid investigation ID');
   }
 
-  const mdPath = path.join(OUTPUT_DIR, `report-${id}.md`);
-  const jsonPath = path.join(OUTPUT_DIR, `report-${id}.json`);
+  // Defense-in-depth against path traversal: even though the regex above
+  // already excludes '/', '..', etc., belt-and-braces — strip any directory
+  // component with basename and then verify the resolved path is still
+  // inside OUTPUT_DIR before touching the filesystem.
+  const safeId = path.basename(id);
+  const mdPath = path.join(OUTPUT_DIR, `report-${safeId}.md`);
+  const jsonPath = path.join(OUTPUT_DIR, `report-${safeId}.json`);
+  const resolvedMd = path.resolve(mdPath);
+  const resolvedJson = path.resolve(jsonPath);
+  const resolvedBase = path.resolve(OUTPUT_DIR);
+  if (
+    !resolvedMd.startsWith(resolvedBase + path.sep) ||
+    !resolvedJson.startsWith(resolvedBase + path.sep)
+  ) {
+    return apiBadRequest('Path traversal detected');
+  }
 
   let markdown = '';
   let machine: any = null;
@@ -30,7 +45,7 @@ export async function GET(
   try {
     markdown = await readFile(mdPath, 'utf8');
   } catch {
-    return NextResponse.json({ error: 'Investigation not found' }, { status: 404 });
+    return apiNotFound('Investigation not found');
   }
 
   try {
@@ -39,5 +54,5 @@ export async function GET(
     /* keep markdown only */
   }
 
-  return NextResponse.json({ id, markdown, machine });
+  return apiOk({ id, markdown, machine });
 }
