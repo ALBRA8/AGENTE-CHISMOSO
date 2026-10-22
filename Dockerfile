@@ -2,17 +2,23 @@
 # =============================================================================
 # CHISMOSO V1.5 — Production multi-stage Dockerfile
 # Task IMP-PROD-OPS, audit PROD-AUDIT-OPS P0-1.
+# R3-FIX (P0-1): Stage order swapped so chismoso TypeScript is compiled
+#   BEFORE `bun run build` (Next.js webpack). 7+ API routes have STATIC
+#   imports of `chismoso/dist/*` that webpack resolves at compile time;
+#   if chismoso/dist doesn't exist when `bun run build` runs, webpack
+#   throws "Module not found" and the Docker build fails.
 #
-# Image layout:
-#   Stage 1 (deps)                  — install root Next.js deps with bun
-#   Stage 2 (builder)               — `bun run build` → .next/standalone/server.js
-#   Stage 3a (chismoso-deps)        — install chismoso deps WITH devDeps (typescript)
-#   Stage 3b (chismoso-runtime-deps) — install chismoso deps prod-only (for runtime)
-#   Stage 3c (chismoso-builder)     — `bunx tsc` → chismoso/dist/{cli,scheduler/...}.js
-#   Stage 4 (runtime)               — node:20-alpine, runs `node server.js` as nextjs:nodejs
+# Image layout (R3-FIX):
+#   Stage 1 (deps)                   — install root Next.js deps with bun
+#   Stage 2 (chismoso-deps)          — install chismoso deps WITH devDeps (typescript)
+#   Stage 3 (chismoso-runtime-deps)  — install chismoso deps prod-only (for runtime)
+#   Stage 4 (chismoso-builder)       — `bunx tsc` → chismoso/dist/{cli,scheduler/...}.js
+#   Stage 5 (builder)                — COPY --from=chismoso-builder chismoso/dist,
+#                                       then `bun run build` → .next/standalone/server.js
+#   Stage 6 (runtime)                — node:20-alpine, runs `node server.js` as nextjs:nodejs
 #
 # Target image size: < 500 MB (audit target).
-# Native modules (better-sqlite3) are built for musl in stages 1, 3a, 3b so they
+# Native modules (better-sqlite3) are built for musl in stages 1, 2, 3, 4 so they
 # work in the node:20-alpine runtime without recompilation.
 # =============================================================================
 
@@ -40,37 +46,10 @@ RUN bun install --frozen-lockfile
 
 
 # -----------------------------------------------------------------------------
-# Stage 2: builder
-#   Copy source + deps, run `bun run build` (which is
-#   `next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/`).
-#   Produces `.next/standalone/server.js` + bundled minimal `node_modules`.
-# -----------------------------------------------------------------------------
-FROM oven/bun:1.3-alpine AS builder
-
-WORKDIR /app
-
-ENV NEXT_TELEMETRY_DISABLED=1 \
-    NODE_ENV=production
-
-# Reuse the deps stage's node_modules without re-installing.
-COPY --from=deps /app/node_modules ./node_modules
-
-# Copy the rest of the source. .dockerignore keeps build artifacts, data,
-# .git, .env* out of this context.
-COPY . .
-
-# Build Next.js. If `output: "standalone"` is missing from next.config.ts the
-# build script's build.sh self-heals it; here we trust the committed config.
-RUN bun run build
-
-
-# -----------------------------------------------------------------------------
-# Stage 3: chismoso-builder
-#   Compile chismoso TypeScript → dist/. Better-sqlite3 is rebuilt for musl here
-#   so the node:20-alpine runtime can `require()` it without recompiling.
-#
-#   We split this into two stages (deps + builder) because the build needs
-#   TypeScript (devDep) but the runtime node_modules should be prod-only.
+# Stage 2: chismoso-deps
+#   Install ALL chismoso deps (incl. devDeps — typescript is required for the
+#   tsc build in Stage 4 below). Split from runtime-deps so the final image
+#   carries only prod deps.
 # -----------------------------------------------------------------------------
 FROM oven/bun:1.3-alpine AS chismoso-deps
 
@@ -83,7 +62,7 @@ COPY chismoso/package.json chismoso/bun.lock ./
 RUN bun install --frozen-lockfile
 
 # -----------------------------------------------------------------------------
-# Stage 3b: chismoso-runtime-deps
+# Stage 3: chismoso-runtime-deps
 #   Same as chismoso-deps but --production. Used as the source of the
 #   runtime node_modules (no typescript, no test framework).
 # -----------------------------------------------------------------------------
@@ -97,8 +76,15 @@ COPY chismoso/package.json chismoso/bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 # -----------------------------------------------------------------------------
-# Stage 3c: chismoso-builder
+# Stage 4: chismoso-builder
 #   Uses chismoso-deps' node_modules (which has typescript) to compile the TS.
+#   This MUST run BEFORE Stage 5 (builder) so `bun run build` (Next.js webpack)
+#   can resolve the static `chismoso/dist/*` imports in 7+ API routes.
+#
+#   R3-FIX (P0-1): Previously this was Stage 3c AFTER Stage 2 (builder), which
+#   meant `bun run build` ran without chismoso/dist existing in the build
+#   context — webpack failed with "Module not found" on every `import ... from
+#   '../../chismoso/dist/foo.js'` line.
 # -----------------------------------------------------------------------------
 FROM oven/bun:1.3-alpine AS chismoso-builder
 
@@ -113,7 +99,54 @@ RUN bunx tsc
 
 
 # -----------------------------------------------------------------------------
-# Stage 4: runtime
+# Stage 5: builder
+#   Copy source + deps + the freshly-compiled chismoso/dist (from Stage 4),
+#   then run `bun run build` (which is `next build && cp -r .next/static
+#   .next/standalone/.next/ && cp -r public .next/standalone/`).
+#   Produces `.next/standalone/server.js` + bundled minimal `node_modules`.
+#
+#   R3-FIX (P0-1): The COPY --from=chismoso-builder line below is the crux of
+#   the fix. Without it, Next.js webpack cannot resolve the 7+ static imports
+#   of `chismoso/dist/*` in API routes.
+# -----------------------------------------------------------------------------
+FROM oven/bun:1.3-alpine AS builder
+
+WORKDIR /app
+
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+
+# Reuse the deps stage's node_modules without re-installing.
+COPY --from=deps /app/node_modules ./node_modules
+
+# R3-FIX (P0-1): chismoso's node_modules (incl. typescript devDep) so the
+# `prebuild` hook in package.json (`cd chismoso && bunx tsc`) can re-resolve
+# tsc when `bun run build` fires it. The re-compile is idempotent — Stage 4
+# already produced chismoso/dist; running tsc again just re-emits the same
+# files. Carrying chismoso-deps here is a few MB; the alternative (skipping
+# prebuild inside Docker via an env flag) is more fragile.
+COPY --from=chismoso-deps /app/chismoso/node_modules ./chismoso/node_modules
+
+# R3-FIX (P0-1): Copy chismoso/dist BEFORE the Next.js build runs.
+# Webpack resolves static imports of `chismoso/dist/*` against this tree.
+COPY --from=chismoso-builder /app/chismoso/dist ./chismoso/dist
+# Also copy chismoso/package.json + tsconfig.json so that any path alias
+# resolution that consults the chismoso package manifest works during build.
+COPY chismoso/package.json chismoso/tsconfig.json ./chismoso/
+
+# Copy the rest of the source. .dockerignore keeps build artifacts, data,
+# .git, .env* out of this context.
+COPY . .
+
+# Build Next.js. The `prebuild` npm lifecycle hook fires `cd chismoso && bunx
+# tsc` BEFORE next build — defense-in-depth so the build NEVER runs against a
+# stale chismoso/dist. If `output: "standalone"` is missing from next.config.ts
+# the build script's build.sh self-heals it; here we trust the committed config.
+RUN bun run build
+
+
+# -----------------------------------------------------------------------------
+# Stage 6: runtime
 #   node:20-alpine base. Runs as non-root user `nextjs:nodejs` (uid/gid 1001).
 #   Uses tini for PID 1 signal forwarding (clean SIGTERM → graceful shutdown
 #   of Next.js, mini-services, chismoso scheduler subprocess).
@@ -135,7 +168,8 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     CHISMOSO_DB_PATH=/data/chismoso.db \
-    CHISMOSO_OUTPUT_DIR=/data/reports
+    CHISMOSO_OUTPUT_DIR=/data/reports \
+    CHISMOSO_DIST_PATH=/app/chismoso/dist
 
 # --- Next.js standalone (bundles minimal node_modules + .next/static) ---
 # `bun run build` already copied `.next/static` and `public` into

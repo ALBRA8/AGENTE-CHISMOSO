@@ -154,6 +154,23 @@ jobs:
           bun-version: 1.3
       - name: Install deps
         run: bun install --frozen-lockfile
+      - name: Install chismoso deps
+        run: |
+          cd chismoso
+          bun install --frozen-lockfile
+      # R3-FIX (P0-1): chismoso MUST be compiled before `bun run build` so
+      # Next.js webpack can resolve the 7+ static imports of
+      # `chismoso/dist/*` in src/app/api/* and src/lib/*. Running the
+      # chismoso compile after `bun run build` made the build job fail on
+      # every fresh checkout (chismoso/dist didn't exist when webpack ran).
+      - name: Build chismoso (tsc)
+        run: |
+          cd chismoso
+          bunx tsc
+      - name: Verify chismoso dist
+        run: |
+          test -f chismoso/dist/cli.js || { echo "chismoso/dist/cli.js missing"; exit 1; }
+          test -f chismoso/dist/scheduler/run.js || { echo "chismoso/dist/scheduler/run.js missing"; exit 1; }
       - name: Build Next.js
         env:
           NEXT_TELEMETRY_DISABLED: "1"
@@ -163,14 +180,6 @@ jobs:
           test -f .next/standalone/server.js || { echo "standalone server.js missing"; exit 1; }
           test -d .next/standalone/.next/static || { echo "static assets missing"; exit 1; }
           test -d .next/standalone/public || { echo "public assets missing"; exit 1; }
-      - name: Build chismoso (tsc)
-        run: |
-          cd chismoso
-          bunx tsc
-      - name: Verify chismoso dist
-        run: |
-          test -f chismoso/dist/cli.js || { echo "chismoso/dist/cli.js missing"; exit 1; }
-          test -f chismoso/dist/scheduler/run.js || { echo "chismoso/dist/scheduler/run.js missing"; exit 1; }
 
   security-scan:
     name: Dependency audit (high+)

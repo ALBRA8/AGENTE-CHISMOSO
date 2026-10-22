@@ -1,8 +1,12 @@
 [Unit]
 Description=CHISMOSO Next.js production server
 Documentation=https://github.com/chismoso/chismoso
-After=network.target postgresql.service
-Wants=postgresql.service
+# R3-FIX (P0-3): Removed stale `postgresql.service` references (Postgres was
+# removed in R2-IMP-OPS — Prisma + Postgres gone from docker-compose, env,
+# docs, deploy.yml). `redis.service` is left as a soft After= hint — Redis is
+# OPTIONAL (in-memory rate-limit + cache fallback exists), so a missing
+# redis.service unit will not block chismoso.service from starting.
+After=network.target redis.service
 
 [Service]
 Type=simple
