@@ -91,8 +91,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  logger.error('Scheduler fatal', { err: e?.stack ?? String(e) });
-  // eslint-disable-next-line no-console
-  console.error('[chismoso-scheduler] FATAL:', e?.stack ?? e);
+  // P0-4 (R2-IMP-OBS): use the structured chismoso logger (JSON output
+  // + PII redactors + trace_id propagation) instead of a free-text
+  // `console.error` that bypasses both. The logger's redactors will
+  // sanitise the stack (redact emails, IPs, URL query strings).
+  logger.error('scheduler_fatal', { err: e?.stack ?? String(e) });
   process.exit(1);
 });

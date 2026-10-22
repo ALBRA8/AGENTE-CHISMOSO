@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
 import { validateQuery, validateTopK } from '@/lib/validation';
 import { apiBadRequest, apiOk, apiRateLimited, apiServerError } from '@/lib/api-response';
+import { authedPOST } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -72,7 +73,7 @@ interface SignalMetaRow {
  *     to chismoso/src/intelligence/embeddings.ts::EmbeddingClient.computeEmbedding,
  *     so embeddings written by the orchestrator are directly searchable.
  */
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export const POST = authedPOST(async (request: NextRequest): Promise<NextResponse> => {
   // 0. Rate limit (per-IP, 30/min).
   const ip = getClientIP(request);
   const rl = rateLimit(`semanticSearch:${ip}`, LIMITS.semanticSearch);
@@ -180,7 +181,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       try { db.close(); } catch { /* ignore */ }
     }
   }
-}
+});
 
 // ---------------------------------------------------------------------------
 // TF-IDF HASH EMBEDDING (mirror of chismoso/src/intelligence/embeddings.ts)

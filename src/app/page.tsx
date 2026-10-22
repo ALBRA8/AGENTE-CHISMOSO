@@ -1104,7 +1104,7 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <Tabs value={sideTab} onValueChange={(v) => setSideTab(v as any)}>
-                  <TabsList className="grid grid-cols-5 w-full mb-3" size="sm">
+                  <TabsList className="grid grid-cols-5 w-full mb-3">
                     <TabsTrigger value="providers" className="text-[10px] px-1 py-1">
                       <Server className="h-3 w-3 mr-0.5" />
                       Prov.

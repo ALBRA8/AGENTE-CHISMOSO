@@ -1,0 +1,100 @@
+# =============================================================================
+# CHISMOSO V1.5 — .dockerignore
+# Task IMP-PROD-OPS, audit PROD-AUDIT-OPS P0-1.
+#
+# Keeps the Docker build context small + reproducible. Excludes:
+#   - Build artifacts (.next, chismoso/dist) — they're produced inside the build
+#   - Runtime data (DBs, reports) — mounted as volumes in compose
+#   - VCS + caches (.git, .idea, .vscode, .turbo, .cache)
+#   - Local environment files (.env*) — secrets must NOT enter the image
+#   - Test fixtures + logs — never needed in prod image
+# =============================================================================
+
+# --- Dependencies (will be installed inside the image) ---
+node_modules
+**/node_modules
+chismoso/node_modules
+
+# --- Build artifacts (reproduced inside the image) ---
+.next
+out
+build
+dist
+**/dist
+chismoso/dist
+
+# --- Runtime data (mounted as volumes in docker-compose) ---
+chismoso/data
+download
+db/*.db
+db/*.db-journal
+db/*.db-shm
+db/*.db-wal
+data
+data/*
+
+# --- VCS + IDE + caches ---
+.git
+.gitignore
+.github
+.idea
+.vscode
+.turbo
+.cache
+.eslintcache
+*.tsbuildinfo
+coverage
+.nyc_output
+
+# --- Environment + secrets (NEVER enter the image) ---
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+*.p12
+
+# --- Docs + agent-only artifacts (not needed at runtime) ---
+docs
+*.md
+!INICIO-RAPIDO.md
+agent-ctx
+tool-results
+chismoso/docs
+chismoso/tests
+chismoso/scripts
+tests
+**/tests
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+
+# --- Logs ---
+*.log
+dev.log
+dev.out.log
+server.log
+chismoso.log
+scheduler.log
+
+# --- Docker meta (avoid recursive context bloat) ---
+Dockerfile
+.dockerignore
+docker-compose*.yml
+.docker
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- Next.js meta ---
+next-env.d.ts
+.vercel
+
+# --- Local launcher scripts (dev-only) ---
+.zscripts
+start.sh
+start.bat
+start.command

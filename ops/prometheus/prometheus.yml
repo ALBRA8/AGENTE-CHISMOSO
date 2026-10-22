@@ -1,0 +1,133 @@
+# CHISMOSO V1.5 — Prometheus scrape configs (Task R2-IMP-OBS P0-6).
+#
+# Lifted + condensed from docs/ALERTING.md §"Synthetic monitoring" and
+# the comments in the existing metrics module. The Prometheus service
+# in docker-compose.monitoring.yml mounts this file at
+# /etc/prometheus/prometheus.yml.
+#
+# Scrape targets:
+#   1. CHISMOSO app — /api/metrics on the Next.js process. Every 15s.
+#   2. Blackbox HTTP probes — /api/livez, /api/readyz, /api/health.
+#      Every 30s. Uses the blackbox_exporter service.
+#   3. Blackbox ICMP probe — server reachability. Every 30s.
+#   4. node_exporter (if installed) — host metrics (disk, CPU, memory).
+#      Every 15s. Optional in V1.5.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+  # The `external_labels` are attached to ALL metrics from this
+  # Prometheus instance. Use them when federating or when multiple
+  # Prometheus instances aggregate into a single global view.
+  external_labels:
+    cluster: chismoso
+    environment: production
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # 1. CHISMOSO app — /api/metrics (JSON → Prometheus text exposition).
+  # ---------------------------------------------------------------------------
+  - job_name: chismoso
+    metrics_path: /api/metrics
+    scheme: http
+    # Override the scrape_interval for the app — we want 15s granularity
+    # for the histogram (the p95 alert rolls a 5m window).
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          # `app` is the docker-compose service name when running
+          # inside the monitoring network. For bare-metal deploys,
+          # change to `localhost:3000`.
+          - app:3000
+        labels:
+          service: chismoso
+
+  # ---------------------------------------------------------------------------
+  # 2. Blackbox HTTP probes — /api/livez, /api/readyz, /api/health.
+  # ---------------------------------------------------------------------------
+  # Each probe goes through the blackbox_exporter (a separate service
+  # running on port 9115). Prometheus scrapes the blackbox_exporter
+  # at /probe?target=<URL>&module=<module>, and the exporter fetches
+  # the target URL and emits `probe_success` + latency metrics.
+  - job_name: chismoso_blackbox_livez
+    metrics_path: /probe
+    scrape_interval: 30s
+    params:
+      module: [http_2xx]
+      target: [http://app:3000/api/livez]
+    static_configs:
+      - targets:
+          - blackbox:9115
+        labels:
+          probe: livez
+
+  - job_name: chismoso_blackbox_readyz
+    metrics_path: /probe
+    scrape_interval: 30s
+    params:
+      # readyz returns 200 OR 503 — both are valid responses. The
+      # `readyz_failing` alert keys off `probe_success == 0` (a non-
+      # 2xx/503 response).
+      module: [http_2xx_or_503]
+      target: [http://app:3000/api/readyz]
+    static_configs:
+      - targets:
+          - blackbox:9115
+        labels:
+          probe: readyz
+
+  - job_name: chismoso_blackbox_health
+    metrics_path: /probe
+    scrape_interval: 30s
+    params:
+      module: [http_2xx]
+      target: [http://app:3000/api/health]
+    static_configs:
+      - targets:
+          - blackbox:9115
+        labels:
+          probe: health
+
+  # ---------------------------------------------------------------------------
+  # 3. Blackbox ICMP probe — host reachability from the exporter's view.
+  # ---------------------------------------------------------------------------
+  # Catches the case where the Next.js process is alive and answering
+  # HTTP but the host has lost network connectivity from outside the
+  # monitoring vantage point.
+  - job_name: chismoso_blackbox_icmp
+    metrics_path: /probe
+    scrape_interval: 30s
+    params:
+      module: [icmp]
+      target: [app]
+    static_configs:
+      - targets:
+          - blackbox:9115
+        labels:
+          probe: icmp
+
+  # ---------------------------------------------------------------------------
+  # 4. node_exporter (host metrics — disk, CPU, memory, network).
+  # ---------------------------------------------------------------------------
+  # Optional in V1.5 — install node_exporter separately on the host
+  # (systemd unit or via Ansible). When present, this gives us the
+  # `node_filesystem_avail_bytes` metric used by the `disk_usage_high`
+  # alert. Without it, that alert stays pending (no data).
+  - job_name: node_exporter
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - node-exporter:9100
+        labels:
+          service: chismoso-host

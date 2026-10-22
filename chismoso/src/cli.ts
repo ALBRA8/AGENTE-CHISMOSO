@@ -35,6 +35,7 @@ import {
   DEFAULT_WATCH_PATH,
 } from './scheduler/index.js';
 import { AgentMesh } from './mesh/index.js';
+import { MeshDB } from './mesh/db.js';
 import { autoPublishOpportunities } from './mesh/auto-publish.js';
 import { AnomalyDetector } from './anomaly/index.js';
 import {
@@ -105,6 +106,10 @@ async function main(): Promise<void> {
 
   if (cmd === 'auth') {
     return runAuthCommand(args, cfg);
+  }
+
+  if (cmd === 'users') {
+    return runUsersCommand(args, cfg);
   }
 
   if (cmd === 'doctor') {
@@ -425,6 +430,8 @@ Usage:
   chismoso auth status                            Show whether auth is currently enabled
   chismoso auth enable                            Enable auth in .env (CHISMOSO_AUTH_ENABLED=true)
   chismoso auth disable                           Disable auth in .env (CHISMOSO_AUTH_ENABLED=false)
+  chismoso users add <username> <password> [--role=admin]  Add or update an operator user (bcrypt-hashed)
+  chismoso users list                              List operator users (no password hashes)
   chismoso history [--topic=<topic>]              Show trend history
   chismoso show <investigationId>                 Show a stored investigation
   chismoso watch [--init] [--interval=Ms] [--topic="..."]  Continuously re-investigate a watch list
@@ -462,7 +469,11 @@ Mesh subcommands:
   chismoso mesh publish --opportunity-id=<id>            Manually publish an opportunity
   chismoso mesh deliver                                  Deliver pending events to subscribers
   chismoso mesh subscribe --agent=NAME --url=URL [--secret=XXX]
-                                                         Register/update a webhook subscriber
+                                                  Register/update a subscriber. The secret is
+                                                  SHA-256-hashed on write — only the hash is
+                                                  stored in the DB. Outbound delivery reads the
+                                                  plaintext secret from env
+                                                  CHISMOSO_WEBHOOK_SECRET_<NAME_UPPER>.
   chismoso mesh list --pending --agent=NAME [--limit=N]  List pending events for an agent
   chismoso mesh signals [--limit=N]                      List recent external signals
   chismoso mesh config                                   Show current mesh config (JSON)
@@ -732,7 +743,20 @@ async function runMeshCommand(args: string[], cfg: ReturnType<typeof resolveConf
         process.exit(2);
       }
       mesh.upsertSubscriber({ agentName, webhookUrl, secret });
-      console.log(JSON.stringify({ ok: true, agentName, webhookUrl, hasSecret: Boolean(secret) }, null, 2));
+      // Compute the env var name that the operator should set for
+      // outbound delivery (the plaintext secret is NOT stored in the
+      // DB — only its SHA-256 hash is; see audit H-8).
+      const envVar = `CHISMOSO_WEBHOOK_SECRET_${agentName.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+      console.log(JSON.stringify({
+        ok: true,
+        agentName,
+        webhookUrl,
+        hasSecret: Boolean(secret),
+        secretStorage: 'sha256_hash_only_in_db',
+        note: secret
+          ? `Plaintext secret is NOT stored. Set ${envVar}=<plaintext> in the Next.js process env so outbound delivery can sign payloads.`
+          : `No secret set — outbound webhooks will be unsigned.`,
+      }, null, 2));
       return;
     }
 
@@ -2282,6 +2306,125 @@ function runAuthCommand(args: string[], _cfg: ReturnType<typeof resolveConfig>):
   console.error(`Unknown auth subcommand: ${sub}`);
   console.error("Try 'chismoso auth token', 'chismoso auth status', 'chismoso auth enable', or 'chismoso auth disable'.");
   process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// §34 USERS subcommands (Task IMP-PROD-SEC, audit C-2)
+// ---------------------------------------------------------------------------
+
+/**
+ * `chismoso users add <username> <password> [--role=admin]`
+ *   — insert (or update) an operator user. The password is hashed with
+ *     bcrypt (cost factor 12) and stored in the chismoso_users table
+ *     (alongside the mesh tables in the chismoso SQLite DB).
+ *
+ * `chismoso users list`
+ *   — list operator users (no password hashes).
+ *
+ * The auth check itself lives in `src/lib/auth.ts` (Next.js side). The
+ * CLI just provisions users so operators can manage accounts without
+ * running ad-hoc SQL.
+ */
+async function runUsersCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): Promise<void> {
+  const sub = args[1] ?? 'list';
+
+  if (sub === 'add') {
+    const username = args[2];
+    const password = args[3];
+    if (!username || !password) {
+      console.error('Usage: chismoso users add <username> <password> [--role=admin]');
+      process.exit(2);
+    }
+    if (username.length > 64) {
+      console.error('Username too long (max 64 chars)');
+      process.exit(2);
+    }
+    if (password.length < 8) {
+      console.error('Password too short (min 8 chars)');
+      process.exit(2);
+    }
+    if (password.length > 256) {
+      console.error('Password too long (max 256 chars)');
+      process.exit(2);
+    }
+    const role = argValue(args, '--role') === 'admin' ? 'admin' : 'operator';
+    const db = new MeshDB(cfg.dbPath);
+    try {
+      const id = await upsertUser(db, username, password, role);
+      console.log(JSON.stringify({
+        ok: true,
+        id,
+        username,
+        role,
+        note: 'User inserted / updated. Restart the Next.js server if you changed the user (sessions are still JWT-signed).',
+      }, null, 2));
+    } finally {
+      db.close();
+    }
+    return;
+  }
+
+  if (sub === 'list') {
+    const db = new MeshDB(cfg.dbPath);
+    try {
+      const rows = db
+        .prepare(`SELECT id, username, role, created_at FROM chismoso_users ORDER BY created_at ASC`)
+        .all() as Array<{ id: string; username: string; role: string; created_at: string }>;
+      console.log(JSON.stringify({ count: rows.length, users: rows }, null, 2));
+    } finally {
+      db.close();
+    }
+    return;
+  }
+
+  console.error(`Unknown users subcommand: ${sub}`);
+  console.error("Try 'chismoso users add <username> <password> [--role=admin]' or 'chismoso users list'.");
+  process.exit(2);
+}
+
+/**
+ * Insert (or update) a chismoso_users row. Mirrors the schema + hashing
+ * in `src/lib/users-db.ts` (which lives on the Next.js side and can't
+ * be imported from the chismoso TS project — different tsconfig + ESM
+ * resolution). The schema is created by `MeshDB`'s constructor (see
+ * `chismoso/src/mesh/db.ts::MESH_SCHEMA` — chismoso_users table).
+ *
+ * Bcrypt cost factor 12 matches `src/lib/auth.ts::BCRYPT_ROUNDS`.
+ */
+async function upsertUser(db: MeshDB, username: string, password: string, role: 'operator' | 'admin'): Promise<string> {
+  const id = `usr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const now = new Date().toISOString();
+  const passwordHash = await hashPasswordBcrypt(password);
+  // The chismoso_users table is created by MESH_SCHEMA in db.ts. Use
+  // upsert-on-conflict(username) so re-adding an existing user updates
+  // the password (operators can rotate credentials by re-running
+  // `users add`).
+  db.prepare(
+    `INSERT INTO chismoso_users (id, username, password_hash, role, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(username) DO UPDATE SET
+       password_hash = excluded.password_hash,
+       role = excluded.role,
+       updated_at = excluded.updated_at`,
+  ).run(id, username, passwordHash, role, now, now);
+  return id;
+}
+
+/**
+ * Hash a plaintext password with bcrypt. Uses `bcryptjs` (pure-JS impl)
+ * — installed at the Next.js project root, available via Node module
+ * resolution from the chismoso/ subproject too because the chismoso
+ * process is launched from `/home/z/my-project/chismoso` and its
+ * `node_modules` lookups fall through to the parent.
+ *
+ * Cost factor 12 = ~250ms on commodity hardware. Matches
+ * `src/lib/auth.ts::BCRYPT_ROUNDS`.
+ */
+async function hashPasswordBcrypt(plaintext: string): Promise<string> {
+  // Dynamic import so the chismoso CLI doesn't pay the bcrypt cost when
+  // the operator never runs `users add`. ESM modules can't use `require`.
+  const bcrypt = await import('bcryptjs');
+  return bcrypt.default.hashSync(plaintext, 12);
 }
 
 /**

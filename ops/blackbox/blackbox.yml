@@ -1,0 +1,62 @@
+# CHISMOSO V1.5 — Blackbox exporter config (Task R2-IMP-OBS P0-6).
+#
+# Lifted + condensed from docs/ALERTING.md §"Synthetic monitoring" +
+# §"Alertmanager routing". The blackbox_exporter is a single binary
+# that Prometheus scrapes with `?target=<URL>&module=<module>`; the
+# exporter fetches the target URL (or pings it for ICMP) and emits
+# `probe_success`, `probe_duration_seconds`, etc.
+#
+# Deployment: the docker-compose.monitoring.yml `blackbox` service
+# mounts this file at /etc/blackbox_exporter/config.yml via a bind
+# mount. The exporter listens on port 9115.
+#
+# Modules:
+#   http_2xx         — HTTP GET, accept 200 only. For /api/livez and
+#                      /api/health.
+#   http_2xx_or_503  — HTTP GET, accept 200 OR 503. For /api/readyz
+#                      (returns 503 when the process is alive but not
+#                      ready, which is NOT a probe failure — the probe
+#                      just records probe_success=0 so the
+#                      `readyz_failing` Prometheus alert can fire).
+#   icmp             — ICMP ping. For host reachability from the
+#                      exporter's vantage point.
+
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      # Follow redirects — /api/health might redirect to /api/livez.
+      follow_redirects: true
+      # Don't send any auth headers — these are unauthenticated probes.
+      # If we add auth later, configure a `bearer_token` here (read
+      # from a file mounted into the container, NOT inline).
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true
+
+  http_2xx_or_503:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      # 200 = ready, 503 = not ready (intentional, not a probe failure).
+      # The `probe_success` metric is 1 for 200 and 0 for 503, which
+      # is what the `readyz_failing` Prometheus alert keys off.
+      valid_status_codes: [200, 503]
+      follow_redirects: true
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true
+
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      # Use IPv4 — the docker network doesn't have IPv6 by default.
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true
+      # Send 2 packets — the second is a retry if the first times out.
+      payload_size: 56

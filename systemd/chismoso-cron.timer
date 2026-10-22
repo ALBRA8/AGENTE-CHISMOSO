@@ -1,0 +1,17 @@
+[Unit]
+Description=CHISMOSO nightly SQLite backup timer
+Documentation=https://github.com/chismoso/chismoso
+
+[Timer]
+# Run at 03:00 local time daily — off-peak for a LATAM-focused product.
+OnCalendar=*-*-* 03:00:00
+# If the system was off at 03:00 (laptop closed, scheduled maintenance),
+# run the missed job as soon as we boot.
+Persistent=true
+# Randomize ±10 minutes so multiple chismoso hosts don't sync their
+# backup hits to the same minute (thundering herd against the S3 bucket
+# if BACKUP_S3_BUCKET is set).
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

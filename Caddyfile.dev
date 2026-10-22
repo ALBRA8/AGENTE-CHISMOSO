@@ -1,0 +1,37 @@
+# CHISMOSO V1.5 — Sandbox / dev Caddyfile (NOT for production use)
+#
+# This file is for the local preview sandbox: it keeps the
+# `?XTransformPort=N` query-string handler so the sandbox preview
+# mechanism can proxy to mini-services on alternate ports.
+#
+# In PRODUCTION, use `Caddyfile` (the HTTPS-only, no-XTransformPort
+# config) — see audit C-4 for why the open proxy is dangerous.
+#
+# Bind to 0.0.0.0:81 so the sandbox gateway can reach it.
+# ----------------------------------------------------------------------------
+
+:81 {
+	bind 0.0.0.0
+
+	@transform_port_query {
+		query XTransformPort=*
+	}
+
+	handle @transform_port_query {
+		reverse_proxy localhost:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

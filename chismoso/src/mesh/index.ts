@@ -37,6 +37,7 @@ import { generateId, nowISO } from '../models.js';
 import { logger } from '../logger.js';
 import { MeshDB, DEFAULT_MESH_DB_PATH } from './db.js';
 import { deliverWebhook } from './webhook.js';
+import { createHash } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // PUBLIC TYPES
@@ -198,6 +199,16 @@ export class AgentMesh {
    * On failure: `delivery_attempts` is incremented, `last_error` is set
    * (we do NOT give up — the next call will retry; subscribers can also
    * ACK events manually via the REST API).
+   *
+   * AUDIT H-8 (Task IMP-PROD-SEC): the per-subscriber plaintext secret
+   * is NO LONGER read from the DB (the `secret` column is now legacy /
+   * empty for V1.5-provisioned subscribers). Instead, outbound delivery
+   * reads the secret from env:
+   *
+   *   `CHISMOSO_WEBHOOK_SECRET_<AGENT_NAME_UPPERCASE>` — e.g. for agent
+   *   `AGENTE-LEADS`, env var `CHISMOSO_WEBHOOK_SECRET_AGENTE_LEADS`
+   *   (dashes → underscores, uppercased). This keeps signing keys out
+   *   of the SQLite file entirely.
    */
   async deliverPending(): Promise<DeliveryStats> {
     const subscribers = this.listActiveSubscribers();
@@ -228,9 +239,14 @@ export class AgentMesh {
         this.recordDeliveryFailure(row.id, `payload_parse_failed: ${e?.message ?? e}`);
         continue;
       }
+      // Resolve the plaintext secret from env — NEVER from the DB.
+      const envSecret = resolveWebhookSecretFromEnv(sub.agentName);
       const result = await deliverWebhook({
         url: sub.webhookUrl,
-        secret: sub.secret,
+        // Prefer the env-supplied secret; fall back to the DB-stored
+        // `secret` for backward compat with V1.0-provisioned subscribers
+        // (the V1.5 `mesh subscribe` CLI never writes the `secret` column).
+        secret: envSecret ?? sub.secret,
         payload,
       });
       if (result.ok) {
@@ -333,20 +349,31 @@ export class AgentMesh {
     return rows.map(parseSubscriberRow);
   }
 
+  /**
+   * Insert (or update) a subscriber. The `sub.secret` field (if provided)
+   * is hashed with SHA-256 and stored ONLY in `secret_hash` — the
+   * plaintext `secret` column is NEVER written by V1.5 (audit H-8).
+   * Outbound delivery reads the plaintext secret from env via
+   * `resolveWebhookSecretFromEnv`.
+   */
   upsertSubscriber(sub: MeshConfigSubscriber): void {
     const id = generateId('mesh_sub');
     const eventsFilter = sub.eventsFilter ? JSON.stringify(sub.eventsFilter) : null;
+    const secretHash = sub.secret
+      ? createHash('sha256').update(sub.secret, 'utf8').digest('hex')
+      : null;
     this.db
       .prepare(
-        `INSERT INTO mesh_subscribers (id, agent_name, webhook_url, secret, events_filter, active, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, ?)
+        `INSERT INTO mesh_subscribers (id, agent_name, webhook_url, secret, secret_hash, events_filter, active, created_at)
+         VALUES (?, ?, ?, NULL, ?, ?, 1, ?)
          ON CONFLICT(agent_name) DO UPDATE SET
            webhook_url = excluded.webhook_url,
-           secret = excluded.secret,
+           secret = NULL,
+           secret_hash = excluded.secret_hash,
            events_filter = excluded.events_filter,
            active = 1`,
       )
-      .run(id, sub.agentName, sub.webhookUrl, sub.secret ?? null, eventsFilter, nowISO());
+      .run(id, sub.agentName, sub.webhookUrl, secretHash, eventsFilter, nowISO());
   }
 
   removeSubscriber(agentName: string): boolean {
@@ -468,7 +495,29 @@ function parseSubscriberRow(r: any): MeshConfigSubscriber {
   return {
     agentName: r.agent_name,
     webhookUrl: r.webhook_url,
+    // V1.5: the `secret` column is no longer written by `upsertSubscriber`
+    // or `setConfig` — only `secret_hash` is. For backward compat with
+    // V1.0-provisioned rows, we still read `secret` if it exists (it will
+    // be NULL for V1.5 rows). Outbound delivery resolves the plaintext
+    // from env via `resolveWebhookSecretFromEnv` first, falling back to
+    // this field only if the env var is unset.
     secret: r.secret ?? undefined,
     eventsFilter: r.events_filter ? JSON.parse(r.events_filter) : undefined,
   };
+}
+
+/**
+ * Resolve the per-agent webhook plaintext secret from env. Convention:
+ *   AGENT_NAME → CHISMOSO_WEBHOOK_SECRET_<NAME_UPPER>
+ * where NAME_UPPER is `agentName.toUpperCase().replace(/[^A-Z0-9]/g, '_')`.
+ *
+ * Example: `AGENTE-LEADS` → `CHISMOSO_WEBHOOK_SECRET_AGENTE_LEADS`.
+ *
+ * Returns `undefined` when the env var is unset (caller then falls back
+ * to the legacy `secret` column, or signs unsigned if neither exists).
+ */
+function resolveWebhookSecretFromEnv(agentName: string): string | undefined {
+  const key = `CHISMOSO_WEBHOOK_SECRET_${agentName.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+  const v = process.env[key];
+  return v && v.length > 0 ? v : undefined;
 }

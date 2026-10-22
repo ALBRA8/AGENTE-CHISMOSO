@@ -1,23 +1,134 @@
-:81 {
-	@transform_port_query {
-		query XTransformPort=*
-	}
+# CHISMOSO V1.5 — Production Caddyfile (Task IMP-PROD-SEC, audit C-3, C-4, H-3, H-10)
+#
+# Changes vs the V1.0 Caddyfile:
+#
+#   1. HTTPS termination with automatic Let's Encrypt certs.
+#      Domain is taken from env `CHISMOSO_DOMAIN` (e.g. chismoso.example.com).
+#      Caddy auto-provisions + renews the cert once the domain A-record points
+#      at this box. HTTP listener issues a 308 permanent redirect → HTTPS.
+#
+#   2. REMOVED the `@transform_port_query` open-proxy block (audit C-4).
+#      The previous config let any unauthenticated client request
+#      `?XTransformPort=N` and have Caddy proxy to localhost:N — a
+#      textbook open proxy + SSRF (could reach :5432 (Postgres), :6379
+#      (Redis), :22 (SSH banner grab), admin panels, etc.).
+#      That hack existed for the preview-feature tool in the sandbox; it
+#      is GONE in production. If a sandbox needs it, bind a separate
+#      listener to 127.0.0.1 only — never expose it on the public site.
+#
+#   3. Security headers block (audit H-3): HSTS preload, X-Frame-Options
+#      DENY, X-Content-Type-Options nosniff, Referrer-Policy, Permissions-
+#      Policy, CSP. Caddy sets these so they apply even to /static and
+#      /_next/static (Next.js's own headers() block only covers app routes).
+#
+#   4. Rate limiting (audit H-10): handled at the Next.js layer
+#      (`src/lib/rate-limit.ts`) using an in-memory per-IP token bucket. The
+#      previous Caddyfile had a `rate_limit { zone chismoso_per_ip 10r/s 20 }`
+#      block here, but that directive requires the third-party
+#      `caddy-rate-limit` plugin which is NOT in the stock `caddy:2-alpine`
+#      image used by `docker-compose.yml`. Including the directive would make
+#      Caddy refuse to start. It was removed in Task R2-IMP-OPS so the base
+#      image works out-of-the-box. If you want edge-level rate limiting back
+#      (e.g. to protect against distributed floods that bypass the per-IP
+#      in-process limiter), build a custom Caddy image with the plugin via
+#      `xcaddy build --with github.com/mholt/caddy-ratelimit` and add the
+#      `rate_limit` block back here.
+#
+#   5. Forward to Next.js on localhost:3000 with `X-Forwarded-For`,
+#      `X-Forwarded-Proto=https`, `X-Real-IP` so the Next.js side can
+#      build correct redirect URLs and trust the proxy chain.
+#
+#   6. TLS 1.3 only (TLS 1.0 / 1.1 are deprecated; 1.2 is acceptable but
+#      1.3 is strictly better for the threat model CHISMOSO faces).
+#
+#   7. encode gzip zstd — compression at the edge saves bandwidth.
+#
+# Replace {$CHISMOSO_DOMAIN} via env (e.g. `CHISMOSO_DOMAIN=chismoso.example.com`).
+# In dev (no domain), use the `:81` http-only listener in `Caddyfile.dev`.
+# ----------------------------------------------------------------------------
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
-	}
+{
+        # Global options — email used by Let's Encrypt for cert expiry notices.
+        email admin@{$CHISMOSO_DOMAIN}
+}
 
-	handle {
-		reverse_proxy localhost:3000 {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
-	}
+# --- HTTP listener: 308 redirect → HTTPS -------------------------------------
+http://:80, http://:81 {
+        bind 0.0.0.0
+        redir https://{$CHISMOSO_DOMAIN}{uri} 308
+}
+
+# --- HTTPS listener: the real site ------------------------------------------
+https://{$CHISMOSO_DOMAIN} {
+        encode gzip zstd
+
+        tls {
+                protocols tls1.3
+        }
+
+        # --- Security headers (defense-in-depth with Next.js's own headers()) ---
+        header {
+                Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                X-Content-Type-Options "nosniff"
+                X-Frame-Options "DENY"
+                Referrer-Policy "strict-origin-when-cross-origin"
+                Permissions-Policy "geolocation=(), microphone=(), camera=()"
+                Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; manifest-src 'self'"
+                X-DNS-Prefetch-Control "off"
+                Cross-Origin-Opener-Policy "same-origin"
+                Cross-Origin-Resource-Policy "same-origin"
+                # Strip the X-Powered-By header if Next.js left it on (defense
+                # in depth — `poweredByHeader: false` in next.config.ts already
+                # removes it from production builds).
+                -Server
+                -X-Powered-By
+        }
+
+        # --- Per-IP rate limit (audit H-10) ---
+        # Removed in Task R2-IMP-OPS: the `rate_limit` directive is not part
+        # of stock Caddy (it requires the third-party `caddy-rate-limit`
+        # plugin). Including it would make the stock `caddy:2-alpine` image
+        # in docker-compose.yml refuse to start. Rate limiting is enforced
+        # at the Next.js layer via `src/lib/rate-limit.ts` (per-IP token
+        # bucket, in-memory, single-instance). To re-enable edge rate
+        # limiting, build a custom Caddy image with the plugin and restore
+        # the block:
+        #
+        #   rate_limit {
+        #       zone chismoso_per_ip 10r/s 20
+        #   }
+
+        reverse_proxy localhost:3000 {
+                # REL2-P0-4 — active health check against /api/readyz.
+                # Caddy probes every 10s; if /readyz returns non-2xx
+                # (503 while draining, 503 when DB unreadable, 503 when
+                # LLM unreachable per the readyz route's allOk check),
+                # Caddy marks the upstream unhealthy and stops routing
+                # new connections to it. During a `systemctl restart`
+                # deploy, this prevents 502/connection-refused to users
+                # for the 2-3 seconds Next.js takes to boot — Caddy
+                # holds the connection and retries once the new
+                # process becomes ready.
+                #
+                # health_path is the URI Caddy GETs (relative to the
+                # upstream's root). health_port pins the probe to the
+                # real upstream port (the reverse_proxy block's
+                # localhost:3000) — needed when the site block also
+                # listens on :443 and Caddy would otherwise probe the
+                # TLS listener.
+                health_uri /api/readyz
+                health_port 3000
+                health_interval 10s
+                health_timeout 2s
+                # 2xx = healthy. 503 = unhealthy (drain / DB-down /
+                # LLM-down). Anything else (5xx other than 503, 4xx) is
+                # treated as unhealthy too — better to fail-closed than
+                # route to a degraded upstream.
+                health_status 2xx
+
+                header_up Host {host}
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto https
+                header_up X-Real-IP {remote_host}
+        }
 }

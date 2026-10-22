@@ -1,0 +1,193 @@
+# =============================================================================
+# CHISMOSO V1.5 — docker-compose.yml (base stack)
+# Task IMP-PROD-OPS, audit PROD-AUDIT-OPS P0-2.
+#
+# Full production stack:
+#   app                — Next.js 16 standalone server (port 3000, internal only)
+#   chismoso-scheduler — Long-running TopicScheduler (own container, same image)
+#   chismoso-backup    — Cron-driven SQLite backup sidecar
+#   redis              — Redis 7 (for rate-limit + cache when scaling out)
+#   caddy              — Reverse proxy + auto HTTPS (ports 80 + 443)
+#
+# NOTE: Prisma / Postgres were removed in Task R2-IMP-OPS (audit P0-15) — the
+# Prisma schema was a placeholder skeleton (`User`/`Post` from create-next-app)
+# never imported by any route, while `DATABASE_URL=postgresql://...` in the
+# env block caused a provider mismatch that would have broken the deploy job's
+# `bunx prisma db push` step. The chismoso intelligence store uses
+# `better-sqlite3` against a single shared volume (`chismoso_data`). For
+# horizontal scaling, operators will need to introduce an external Postgres
+# (or `pglite`/`pg` abstraction) — see docs/OPERATIONS.md §Scaling.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Secrets: read from `.env.production` (gitignored). See
+# `.env.production.example` for documentation.
+# =============================================================================
+
+name: chismoso
+
+# Top-level volumes for persistent data. Mount points are owned by uid/gid
+# 1001 (nextjs:nodejs) — see Dockerfile. Redis stores its own data under its
+# default data dir with its own internal user.
+volumes:
+  redis_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  chismoso_data:
+    driver: local
+  chismoso_reports:
+    driver: local
+  chismoso_backups:
+    driver: local
+
+networks:
+  chismoso_net:
+    driver: bridge
+
+services:
+  # ---------------------------------------------------------------------------
+  # app — Next.js 16 standalone (the dashboard + REST API).
+  # Built from the repo's Dockerfile. Listens on 3000 internally; Caddy
+  # terminates TLS on 80/443 and forwards to it.
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chismoso:local
+    container_name: chismoso-app
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - CHISMOSO_DB_PATH=/data/chismoso.db
+      - CHISMOSO_OUTPUT_DIR=/data/reports
+    ports:
+      - "3000:3000"
+    volumes:
+      - chismoso_data:/data
+      - chismoso_reports:/data/reports
+      - chismoso_backups:/data/backups
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - chismoso_net
+    healthcheck:
+      test: ["/opt/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # chismoso-scheduler — long-running TopicScheduler.
+  # Same image, different CMD: `node chismoso/dist/scheduler/run.js`.
+  # Polls configured topics at intervals, runs investigations, writes back to
+  # the same SQLite DB mounted via the chismoso_data volume.
+  # ---------------------------------------------------------------------------
+  chismoso-scheduler:
+    image: chismoso:local
+    container_name: chismoso-scheduler
+    restart: unless-stopped
+    command: ["node", "chismoso/dist/scheduler/run.js"]
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - CHISMOSO_DB_PATH=/data/chismoso.db
+      - CHISMOSO_OUTPUT_DIR=/data/reports
+    volumes:
+      - chismoso_data:/data
+      - chismoso_reports:/data/reports
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - chismoso_net
+
+  # ---------------------------------------------------------------------------
+  # chismoso-backup — cron sidecar.
+  # Runs `backup-sqlite.sh` every 6h. Writes timestamped, GPG-encrypted
+  # (optional, if BACKUP_GPG_RECIPIENT set) copies to /data/backups (mounted
+  # from chismoso_backups volume).
+  # ---------------------------------------------------------------------------
+  chismoso-backup:
+    image: chismoso:local
+    container_name: chismoso-backup
+    restart: unless-stopped
+    entrypoint: ["/sbin/tini", "--"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "[backup] starting cron loop";
+        while true; do
+          sleep 6h;
+          /opt/scripts/backup-sqlite.sh || echo "[backup] failed at $$(date -u +%FT%TZ)";
+        done
+    env_file:
+      - .env.production
+    environment:
+      - CHISMOSO_DB_PATH=/data/chismoso.db
+      - BACKUP_DIR=/data/backups
+    volumes:
+      - chismoso_data:/data:ro
+      - chismoso_backups:/data/backups
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - chismoso_net
+
+  # ---------------------------------------------------------------------------
+  # redis — Redis 7 alpine with AOF persistence.
+  # Used (planned) for distributed rate-limit + cache when scaling >1 app
+  # instance. AOF enabled so a restart doesn't lose rate-limit windows.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: chismoso-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - chismoso_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # caddy — Reverse proxy + automatic Let's Encrypt HTTPS.
+  # Ports 80 (ACME http-01 challenge + http→https redirect) + 443 (app).
+  # Caddyfile is read-only mounted from the repo root. Certs live in the
+  # caddy_data volume (so they survive container recreation).
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: chismoso-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - CHISMOSO_DOMAIN=${CHISMOSO_DOMAIN:-localhost}
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - chismoso_net

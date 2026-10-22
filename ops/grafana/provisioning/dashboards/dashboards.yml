@@ -1,0 +1,22 @@
+# CHISMOSO V1.5 — Grafana dashboard provisioner.
+#
+# Tells Grafana to load dashboards from /var/lib/grafana/dashboards
+# (bind-mounted to ops/grafana/dashboards in the host). Changes to
+# JSON files in that directory are picked up on the next Grafana
+# restart (or via the "Reload dashboards" API call).
+
+apiVersion: 1
+
+providers:
+  - name: chismoso
+    orgId: 1
+    folder: CHISMOSO
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      # Recurse into subdirectories (allows us to organise dashboards
+      # by concern — overview, latency, errors, infra).
+      foldersFromFilesStructure: true

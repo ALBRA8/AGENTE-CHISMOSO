@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { openMeshDb, getMeshConfig, setMeshConfig } from '../_mesh-db';
 import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
 import { authedPUT } from '@/lib/middleware';
+import { requireRole } from '@/lib/require-role';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,8 +29,13 @@ export async function GET() {
     }));
     return apiOk({ enabled: cfg.enabled, subscribers: safeSubs });
   } catch (e: unknown) {
+    // R2-IMP-SEC (audit H-7): in production apiServerError() replaces the
+    // `details` with `{ correlationId, message }` — `e.message` is logged
+    // server-side + Sentry only, never returned to the client.
     const message = e instanceof Error ? e.message : String(e);
-    return apiServerError('mesh_config_read_failed', { message });
+    return apiServerError('mesh_config_read_failed', {
+      ...(process.env.NODE_ENV !== 'production' ? { message } : {}),
+    });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }
@@ -52,8 +58,16 @@ export async function GET() {
  * subscribers (including the `webhook_url` that CHISMOSO will then call out
  * to). Without auth, any caller could redirect webhook delivery to their own
  * receiver and capture HMAC-signed opportunity payloads in real time.
+ *
+ * R2-IMP-SEC (audit R2-8): the PUT handler is gated on `role === 'admin'`
+ * via `requireRole('admin')` composed inside `authedPUT`. Rewriting the
+ * subscriber list (including redirecting the webhook_url to an
+ * attacker-controlled receiver) is a high-impact mutation that a
+ * regular operator should not be able to trigger. Dev (auth disabled)
+ * bypasses the gate so the dashboard opens without provisioning an
+ * admin user.
  */
-export const PUT = authedPUT(async (req: NextRequest) => {
+export const PUT = authedPUT(requireRole('admin')(async (req: NextRequest) => {
   let body: { enabled?: boolean; subscribers?: unknown };
   try {
     body = (await req.json()) as typeof body;
@@ -90,11 +104,16 @@ export const PUT = authedPUT(async (req: NextRequest) => {
     setMeshConfig(db, body.enabled, subs);
     return apiOk({ enabled: body.enabled, subscribers: subs.length });
   } catch (e: unknown) {
+    // R2-IMP-SEC (audit H-7): in production apiServerError() replaces the
+    // `details` with `{ correlationId, message }` — `e.message` is logged
+    // server-side + Sentry only, never returned to the client.
     const message = e instanceof Error ? e.message : String(e);
-    return apiServerError('mesh_config_write_failed', { message });
+    return apiServerError('mesh_config_write_failed', {
+      ...(process.env.NODE_ENV !== 'production' ? { message } : {}),
+    });
   } finally {
     if (db) {
       try { db.close(); } catch { /* ignore */ }
     }
   }
-});
+}));

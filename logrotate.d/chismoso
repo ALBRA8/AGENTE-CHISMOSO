@@ -1,0 +1,49 @@
+# logrotate config for CHISMOSO V1.5 (Task IMP-PROD-OBS, P0-9).
+#
+# Install: drop this file at /etc/logrotate.d/chismoso (or run
+# `logrotate -d /etc/logrotate.d/chismoso` to dry-run).
+#
+# Rotates:
+#   - /var/log/chismoso/server.log    (Next.js prod stdout via `tee`)
+#   - /var/log/chismoso/scheduler.log (chismoso scheduler append-file)
+#   - /var/log/chismoso/dev.log       (Next.js dev stdout via `tee`)
+#   - /var/log/chismoso/heapdump-*.heapsnapshot (V8 heap snapshots)
+#
+# Policy:
+#   - daily rotation
+#   - 30 days retained
+#   - gzip compressed (delayed by one cycle so the most recent
+#     rotated file stays plaintext for `tail -f`)
+#   - missing files are OK (dev.log won't exist in prod, server.log
+#     won't exist in dev)
+#   - empty files are NOT rotated (no point)
+#   - postrotate sends SIGHUP — Next.js's `tee` pipeline reopens the
+#     file on the next write, so we don't lose log lines. The chismoso
+#     scheduler's `fileAppendedLogger` also reopens on the next
+#     `appendFileSync` call (better-sqlite3 handles the file-handle
+#     lifecycle, but the scheduler uses `node:fs` directly — see
+#     chismoso/src/scheduler/index.ts).
+#
+# The `systemctl reload chismoso` in the postrotate is a no-op when
+# the systemd unit doesn't define an `ExecReload=` directive — it
+# just restarts the unit's main process. This is safe under the
+# graceful-shutdown handler (src/lib/graceful-shutdown.ts) which
+# drains in-flight requests before exit.
+
+/var/log/chismoso/*.log
+/var/log/chismoso/heapdump-*.heapsnapshot
+{
+  daily
+  rotate 30
+  compress
+  delaycompress
+  missingok
+  notifempty
+  create 0644 chismoso chismoso
+  dateext
+  dateformat -%Y%m%d-%H
+  sharedscripts
+  postrotate
+    systemctl reload chismoso 2>/dev/null || true
+  endscript
+}

@@ -1,0 +1,109 @@
+# CHISMOSO V1.5 — Alertmanager routing config (Task R2-IMP-OBS P0-6).
+#
+# Lifted + condensed from docs/ALERTING.md §"Alertmanager routing".
+# The Alertmanager service in docker-compose.monitoring.yml mounts
+# this file at /etc/alertmanager/config.yml via a bind mount.
+#
+# Routing policy:
+#   - Group by `alertname` + `severity` so a single incident pages
+#     ONCE per rule (not once per firing instance).
+#   - group_wait: 30s — buffer briefly so correlated alerts collapse
+#     into a single notification.
+#   - group_interval: 5m — re-notify with the same group every 5 min
+#     while it's still firing (so the operator gets a reminder).
+#   - repeat_interval: 4h — don't re-page for the same incident for
+#     4h (avoids pager fatigue for chronic issues).
+#
+# Severity routing:
+#   P1 → on-call email + Slack channel #chismoso-alerts (pages).
+#   P2 → Slack channel only (ticket-queue, no page).
+#   default (P3) → Slack channel only.
+
+route:
+  receiver: default
+  group_by: ['alertname', 'severity', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # P1 — page the on-call. PagerDuty is wired if PAGERDUTY_CHISMOSO_KEY
+    # is set in the env; otherwise only email + Slack fire (so dev /
+    # staging environments without PagerDuty still get notified).
+    - matchers:
+        - severity="P1"
+      receiver: pagerduty-chismoso
+      group_wait: 0s
+      repeat_interval: 1h
+      continue: false
+    # P2 — Slack only. No page; the operator picks it up on the
+    # morning standup.
+    - matchers:
+        - severity="P2"
+      receiver: slack-chismoso
+      group_wait: 5m
+      repeat_interval: 12h
+      continue: false
+    # P3 — dashboard-tier. Slack only, long group_wait.
+    - matchers:
+        - severity="P3"
+      receiver: slack-chismoso
+      group_wait: 30m
+      repeat_interval: 24h
+      continue: false
+
+receivers:
+  - name: default
+    slack_configs:
+      - channel: '#chismoso-alerts'
+        # `send_resolved: true` so the on-call sees when an incident
+        # cleared itself (vs. when a human manually closed it).
+        send_resolved: true
+        # Render the alert summary + the runbook URL in the Slack
+        # notification. The default Alertmanager Slack template is
+        # terse to the point of being useless for on-call triage.
+        title: '{{ .CommonLabels.alertname }} [{{ .CommonLabels.severity }}]'
+        text: >-
+          {{ .CommonAnnotations.summary }}
+          Runbook: {{ .CommonAnnotations.runbook }}
+
+  - name: pagerduty-chismoso
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_CHISMOSO_KEY}'
+        severity: critical
+        # Send the alert summary + runbook URL to PagerDuty too (the
+        # default PagerDuty integration only sends the alert name).
+        description: '{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+        # `send_resolved: true` so PagerDuty auto-acknowledges when
+        # the alert clears.
+        send_resolved: true
+    # Belt-and-braces: also post to Slack so the on-call's teammates
+    # see the page happen (helps during incident triage).
+    slack_configs:
+      - channel: '#chismoso-alerts'
+        send_resolved: true
+        title: '[PAGE] {{ .CommonLabels.alertname }} [{{ .CommonLabels.severity }}]'
+        text: >-
+          {{ .CommonAnnotations.summary }}
+          Runbook: {{ .CommonAnnotations.runbook }}
+
+  - name: slack-chismoso
+    slack_configs:
+      - channel: '#chismoso-alerts'
+        send_resolved: true
+        title: '{{ .CommonLabels.alertname }} [{{ .CommonLabels.severity }}]'
+        text: >-
+          {{ .CommonAnnotations.summary }}
+          Description: {{ .CommonAnnotations.description }}
+          Runbook: {{ .CommonAnnotations.runbook }}
+
+# Inhibit rules: when a P1 is firing, suppress any P2/P3 alerts from
+# the same rule (so the on-call isn't flooded with redundant pages).
+inhibit_rules:
+  - source_matchers:
+      - severity="P1"
+    target_matchers:
+      - severity=~"P2|P3"
+    # Only suppress when the alert name matches — we don't want a P1
+    # on `process_down` to suppress a P2 on `disk_usage_high` (those
+    # are different incidents that happen to overlap in time).
+    equal: ['alertname', 'service']

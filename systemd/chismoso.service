@@ -1,0 +1,67 @@
+[Unit]
+Description=CHISMOSO Next.js production server
+Documentation=https://github.com/chismoso/chismoso
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=chismoso
+Group=chismoso
+
+WorkingDirectory=/opt/chismoso
+EnvironmentFile=/opt/chismoso/.env.production
+
+# ExecStart uses the standalone server.js that `next build` produces.
+# The `start.sh` script in the repo is for dev / single-user; in production
+# we run the compiled output directly. Port 3000, bound to 127.0.0.1 so the
+# only external entrypoint is via the Caddy reverse proxy (Caddyfile at
+# /etc/caddy/Caddyfile).
+ExecStart=/usr/bin/node /opt/chismoso/.next/standalone/server.js
+
+# Bind Next.js to 127.0.0.1:3000 so the dashboard is not directly exposed.
+# Caddy terminates TLS on :81 and reverse-proxies to localhost:3000.
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_ENV=production
+
+# Restart policy — REL-P0-001:
+#   Restart=on-failure  : only restart on non-zero exit (so an operator
+#                         `systemctl stop` stays stopped)
+#   RestartSec=5s        : back off 5s between restart attempts so we
+#                         don't fork-bomb ourselves on a hard crash loop
+#   StartLimitBurst=5    : give up after 5 restart attempts in 60s
+#   StartLimitIntervalSec=60  : the window for the burst cap
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Graceful shutdown — REL-P0-004:
+#   TimeoutStopSec=30s   : give Next.js 30s to drain in-flight requests
+#                         and kill spawned CLI children before systemd
+#                         SIGKILLs us. The graceful-shutdown.ts handler
+#                         uses the same 30s budget internally.
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+# SendSIGKILL=yes is the default — kept explicit for documentation.
+
+# Logging — journal so operators can `journalctl -u chismoso -f` and so
+# `journalctl --vacuum-time=7d` keeps disk under control.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=chismoso
+
+# Hardening — CHISMOSO doesn't need to bind raw sockets, change kernel
+# tunables, or read /etc/shadow. Lock it down so an exploited route
+# can't trivially pivot.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/opt/chismoso/data /opt/chismoso/download /var/log/chismoso /var/backups/chismoso
+
+[Install]
+WantedBy=multi-user.target

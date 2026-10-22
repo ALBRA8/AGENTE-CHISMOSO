@@ -1,0 +1,228 @@
+# CHISMOSO V1.5 — Monitoring stack (Task R2-IMP-OBS P0-6).
+#
+# Bring up the entire observability stack with a single command:
+#
+#   docker compose -f ops/docker-compose.monitoring.yml up -d
+#
+# Services:
+#   prometheus      — metrics scraper + alerting rule evaluator.
+#   loki            — log database (LogQL query interface on :3100).
+#   promtail        — log shipper (reads /var/log/chismoso/*.log + the
+#                     systemd journal, ships to Loki).
+#   alertmanager    — receives P1/P2/P3 alerts from Prometheus + Loki,
+#                     routes to Slack / PagerDuty / email.
+#   grafana         — dashboards (auto-provisioned with the CHISMOSO
+#                     datasource + a starter dashboard).
+#   blackbox        — blackbox_exporter for HTTP + ICMP probes of
+#                     /api/livez, /api/readyz, /api/health.
+#
+# Networks:
+#   monitoring — internal Docker bridge. All monitoring services share
+#                it so they can reach each other by service name
+#                (e.g. `prometheus` → `app:3000`).
+#   chismoso_net — bridge to the chismoso app's network. The `app`
+#                alias lets Prometheus + blackbox reach the Next.js
+#                process on :3000 without exposing the port externally.
+#
+# Volumes:
+#   prometheus_data — TSDB (long-term metrics retention).
+#   loki_data       — chunks + index (long-term log retention).
+#   grafana_data    — dashboard JSON + users.
+
+version: "3.9"
+
+networks:
+  monitoring:
+    driver: bridge
+  chismoso_net:
+    # External — created by the chismoso docker-compose.yml so the
+    # monitoring stack can reach the Next.js process. Adjust the name
+    # if the chismoso stack uses a different network name.
+    external: true
+
+volumes:
+  prometheus_data:
+    driver: local
+  loki_data:
+    driver: local
+  grafana_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+  promtail_data:
+    driver: local
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — metrics scraper + alerting rule evaluator.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: chismoso-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=10GB"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"  # enables /-/reload for config hot-reload
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules/chismoso.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"  # bind to localhost only — expose via Caddy if needed
+    networks:
+      - monitoring
+      - chismoso_net
+    depends_on:
+      - alertmanager
+
+  # ---------------------------------------------------------------------------
+  # Alertmanager — routes P1/P2/P3 alerts to Slack / PagerDuty / email.
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: chismoso-alertmanager
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/config.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.external-url=http://localhost:9093/"
+      - "--web.listen-address=:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/config.yml:ro
+      - alertmanager_data:/alertmanager
+    environment:
+      # Inject Slack + PagerDuty secrets. These are read by Alertmanager
+      # via the ${...} substitution in alertmanager.yml.
+      - SLACK_API_URL=${SLACK_API_URL:-}
+      - SLACK_CHANNEL=${SLACK_CHANNEL:-#chismoso-alerts}
+      - PAGERDUTY_CHISMOSO_KEY=${PAGERDUTY_CHISMOSO_KEY:-}
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks:
+      - monitoring
+
+  # ---------------------------------------------------------------------------
+  # Loki — log database (LogQL query interface).
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: chismoso-loki
+    restart: unless-stopped
+    command:
+      - "-config.file=/etc/loki/loki-config.yml"
+    volumes:
+      # The Loki config (NOT in this repo — see ops/loki/loki-config.yml
+      # below for the inline equivalent). For V1.5 we use Loki's default
+      # single-node config + ship the rules file via the rules/ mount.
+      - ./loki/rules.yml:/etc/loki/rules/chismoso.yml:ro
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - monitoring
+    # Loki's ruler needs an Alertmanager URL to forward alerts to.
+    depends_on:
+      - alertmanager
+
+  # ---------------------------------------------------------------------------
+  # Promtail — log shipper (reads /var/log + journal, pushes to Loki).
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.2.1
+    container_name: chismoso-promtail
+    restart: unless-stopped
+    command:
+      - "-config.file=/etc/promtail/config.yml"
+      - "-config.expand-env=true"
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      # Bind-mount the host's /var/log/chismoso directory (where the
+      # Next.js process + chismoso scheduler write their JSON logs).
+      - /var/log/chismoso:/var/log/chismoso:ro
+      # Bind-mount the systemd journal so Promtail can read the
+      # chismoso.service unit's logs (early-boot logs + crash logs).
+      - /var/log/journal:/var/log/journal:ro
+      - /run/systemd/journal:/run/systemd/journal:ro
+      - promtail_data:/var/lib/promtail
+    networks:
+      - monitoring
+    depends_on:
+      - loki
+
+  # ---------------------------------------------------------------------------
+  # Grafana — dashboards (auto-provisioned with the CHISMOSO datasource
+  # + a starter dashboard).
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: chismoso-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-chismoso}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # Auto-provision datasources + dashboards on first boot.
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - ./grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./grafana/provisioning/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"  # Grafana on :3001 to avoid clashing with the app's :3000
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      - loki
+
+  # ---------------------------------------------------------------------------
+  # Blackbox exporter — HTTP + ICMP probes for the chismoso health endpoints.
+  # ---------------------------------------------------------------------------
+  blackbox:
+    image: prom/blackbox-exporter:v0.26.0
+    container_name: chismoso-blackbox
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+      - "--web.listen-address=:9115"
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "127.0.0.1:9115:9115"
+    networks:
+      - monitoring
+      - chismoso_net
+
+  # ---------------------------------------------------------------------------
+  # node_exporter (optional) — host metrics (disk, CPU, memory).
+  # ---------------------------------------------------------------------------
+  # Uncomment to enable. Without it the `disk_usage_high` Prometheus
+  # alert will stay pending (no data). When the host has node_exporter
+  # installed via systemd, you can also point the prometheus job at
+  # `host.docker.internal:9100` instead of running it in a container.
+  #
+  # node-exporter:
+  #   image: prom/node-exporter:v1.8.2
+  #   container_name: chismoso-node-exporter
+  #   restart: unless-stopped
+  #   pid: host
+  #   volumes:
+  #     - /proc:/host/proc:ro
+  #     - /sys:/host/sys:ro
+  #     - /:/rootfs:ro
+  #   command:
+  #     - "--path.procfs=/host/proc"
+  #     - "--path.sysfs=/host/sys"
+  #     - "--path.rootfs=/rootfs"
+  #   ports:
+  #     - "127.0.0.1:9100:9100"
+  #   networks:
+  #     - monitoring

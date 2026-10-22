@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { openMeshDb, fetchPendingEvents, ackEvents } from '../_mesh-db';
 import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
+import { authedPOST } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,10 +51,13 @@ export async function GET(req: NextRequest) {
  * Alternative ACK endpoint: send `{ ids: string[] }` to mark events as
  * delivered. Same effect as POSTing to `/api/mesh/events/ack`.
  *
+ * §34 / audit C-5 — Protected by `authedPOST`: this endpoint mutates the
+ * outbox (marks events delivered) and was previously unauthenticated.
+ *
  * Response shape:
  *   { acked: number }
  */
-export async function POST(req: NextRequest) {
+export const POST = authedPOST(async (req: NextRequest) => {
   let body: { ids?: string[] };
   try {
     body = (await req.json()) as { ids?: string[] };
@@ -77,4 +81,4 @@ export async function POST(req: NextRequest) {
       try { db.close(); } catch { /* ignore */ }
     }
   }
-}
+});

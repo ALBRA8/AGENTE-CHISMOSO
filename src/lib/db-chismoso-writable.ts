@@ -43,11 +43,32 @@ if (process.env.NODE_ENV !== 'production') {
   globalForWritableDb.__chismosoWritableDb = chismosoWritableDb;
 }
 
-// Ensure WAL + foreign_keys match the chismoso CLI's setup so concurrent
-// writes from this writer and reads from the readonly singleton behave
-// correctly.
+// REL2-P0-2 — Apply the SAME WAL/concurrency pragmas as
+// `chismoso/src/db.ts` so concurrent writes from this writer + concurrent
+// reads from `./db-chismoso.ts` (the readonly singleton) don't trip
+// SQLITE_BUSY under load. Without `busy_timeout`, two investigations
+// racing for the writer lock would synchronously crash the second one
+// (better-sqlite3 throws SQLITE_BUSY immediately on lock contention
+// when busy_timeout=0, the default).
+//
+// Order matters: `journal_mode=WAL` should be the FIRST pragma so the
+// subsequent pragmas apply to the WAL-enabled DB. `wal_autocheckpoint`
+// has no effect in rollback journal mode.
 chismosoWritableDb.pragma('journal_mode = WAL');
 chismosoWritableDb.pragma('foreign_keys = ON');
+// Block up to 5s waiting for a writer lock instead of throwing
+// SQLITE_BUSY synchronously — matches the CLI side's setup so both
+// writer singletons behave identically under contention.
+chismosoWritableDb.pragma('busy_timeout = 5000');
+// synchronous=NORMAL is safe under WAL (the WAL itself is fsync'd on
+// checkpoint) and ~10x faster than the default FULL.
+chismosoWritableDb.pragma('synchronous = NORMAL');
+// 64MB page cache — reduces disk I/O for hot reads/writes (alerts +
+// audit_log are high-frequency tables under prod load). Default is 2MB.
+chismosoWritableDb.pragma('cache_size = -64000');
+// Auto-checkpoint the WAL every 1000 pages (~4MB) so we don't grow an
+// unbounded WAL under burst write traffic.
+chismosoWritableDb.pragma('wal_autocheckpoint = 1000');
 
 // SCHEMA_V4 (alerts table) — identical to chismoso/src/db.ts.
 // Idempotent. Safe to run on every cold start.
@@ -70,7 +91,7 @@ chismosoWritableDb.exec(`
     acknowledged_at   TEXT,
     acknowledged_by   TEXT,
     resolved_at       TEXT,
-    resolution_note   TEXT,
+    resolution_note  TEXT,
     status            TEXT NOT NULL DEFAULT 'DETECTED',
     dedup_key         TEXT NOT NULL,
     cooldown_until    TEXT,
@@ -84,4 +105,26 @@ chismosoWritableDb.exec(`
   CREATE INDEX IF NOT EXISTS idx_alerts_dedup ON alerts(dedup_key);
   CREATE INDEX IF NOT EXISTS idx_alerts_detected ON alerts(detected_at DESC);
   CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
+`);
+
+// SCHEMA_V6 (audit_log table) — identical to chismoso/src/db.ts.
+// Idempotent. Required so /api/audit-log works on a fresh install
+// where the chismoso CLI hasn't been run yet (the writable singleton
+// is what the Next.js audit log writer uses).
+chismosoWritableDb.exec(`
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id              TEXT PRIMARY KEY,
+    timestamp       TEXT NOT NULL,
+    actor           TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    target_type     TEXT,
+    target_id       TEXT,
+    ip              TEXT,
+    user_agent      TEXT,
+    trace_id        TEXT,
+    metadata_json   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+  CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
 `);

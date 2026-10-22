@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
 import type { Database as DB } from 'better-sqlite3';
 import { apiBadRequest, apiNotFound, apiOk, apiServerError } from '@/lib/api-response';
-import { authedPOST } from '@/lib/middleware';
+import { authedPOST, getAuthStatus } from '@/lib/middleware';
+import { getClientIP } from '@/lib/rate-limit';
+import { appendAudit } from '@/lib/audit-log-server';
 import { openSkillsDb } from '../../route';
 import { SkillsCatalog } from '../../../../../../chismoso/dist/skills/index.js';
 import type { ChismosoDB } from '../../../../../../chismoso/dist/db.js';
@@ -76,6 +78,30 @@ export const POST = authedPOST(async (
     // startInvocation refuses non-ACTIVE skills with a thrown Error —
     // surface that as a 400 to the caller.
     const invocation = catalog.startInvocation(skill.id, inputs, investigationId);
+
+    // Append audit log entry — fire-and-forget. Records who invoked
+    // which skill, when, from where, so we can investigate abuse /
+    // regressions / cost spikes.
+    const authStatus = getAuthStatus(req);
+    const actor =
+      authStatus.ok && authStatus.reason !== 'auth_disabled'
+        ? 'user:operator'
+        : 'operator';
+    appendAudit({
+      actor,
+      action: 'skill.invoke',
+      target_type: 'skill',
+      target_id: skill.id,
+      ip: getClientIP(req),
+      user_agent: req.headers.get('user-agent') ?? undefined,
+      metadata: {
+        skill_identity: skill.identity,
+        skill_version: skill.version,
+        invocation_id: invocation.id,
+        investigation_id: investigationId,
+      },
+    });
+
     return apiOk({ invocation }, 201);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);

@@ -1,0 +1,84 @@
+# CHISMOSO V1.5 — Loki alerting rules (Task R2-IMP-OBS P0-6).
+#
+# The 3 LogQL alert rules below are lifted verbatim from
+# docs/ALERTING.md §"Log-based alerts (Loki / LogQL)".
+#
+# Loki's ruler evaluates LogQL expressions on the same cadence as
+# Prometheus (default 30s). When an expression is truthy for `for:`
+# duration, Loki fires the alert and forwards it to Alertmanager via
+# the configured Alertmanager URL.
+#
+# Deployment: the docker-compose.monitoring.yml `loki` service mounts
+# this file at /etc/loki/rules/chismoso.yml via a bind mount. The Loki
+# ruler must be enabled (`ruler.enable_api: true` in the Loki config).
+
+groups:
+  - name: chismoso_logs
+    interval: 30s
+    rules:
+
+      # L1. fatal_log_line (P1) — any line at the ERROR/FATAL level.
+      # The chismoso logger emits `level: "ERROR"` for catch-and-log
+      # failures. A single FATAL is enough to page — they're rare and
+      # almost always indicate a state-corrupting event (uncaught
+      # exception, audit_log_append_failed, heap_snapshot_failed).
+      - alert: fatal_log_line
+        expr: |
+          sum by (trace_id) (
+            count_over_time(
+              {job="chismoso", level="ERROR"}[1m]
+            ) > 0
+          )
+        for: 1m
+        labels:
+          severity: P1
+          team: chismoso
+          source: loki
+        annotations:
+          summary: "FATAL/ERROR log line detected"
+          description: "At least one ERROR-level log line was emitted in the last minute. Check the trace_id for correlation."
+          runbook: "docs/RUNBOOK.md#3-process-crash--oom"
+
+      # L2. uncaught_exception (P1) — the graceful-shutdown handler logs
+      # `uncaught_exception` JSON when the process is about to die. This
+      # is a sentinel for state corruption — the next request might be
+      # served by a process in an undefined state.
+      - alert: uncaught_exception
+        expr: |
+          sum(count_over_time(
+            {job="chismoso"} |= "uncaught_exception" | json [5m]
+          )) > 0
+        for: 0m
+        labels:
+          severity: P1
+          team: chismoso
+          source: loki
+        annotations:
+          summary: "uncaughtException logged in the last 5 min"
+          description: "The process caught an uncaughtException. The handler called process.exit(1) — check if a restart is needed."
+          runbook: "docs/RUNBOOK.md#3-process-crash--oom"
+
+      # L3. error_rate_spike (P2) — error log volume in the last 5 min
+      # is 3x the 1h average. Catches the "noise before the storm"
+      # pattern: lots of WARN/ERROR lines precede a 5xx surge but don't
+      # trip the high_5xx_rate Prometheus alert (which needs actual 5xx
+      # responses).
+      - alert: error_rate_spike
+        expr: |
+          (
+            sum(count_over_time({job="chismoso", level=~"ERROR|WARN"}[5m]))
+            /
+            clamp_min(
+              sum(count_over_time({job="chismoso", level=~"ERROR|WARN"}[1h])) / 12,
+              1
+            )
+          ) > 3
+        for: 5m
+        labels:
+          severity: P2
+          team: chismoso
+          source: loki
+        annotations:
+          summary: "Error log volume 3x baseline over the last 5 min"
+          description: "The error/warn log rate in the last 5 min is significantly above the 1h average. Investigate before the SLO burn alert fires."
+          runbook: "docs/RUNBOOK.md#7-high-error-rate-5xx--1"

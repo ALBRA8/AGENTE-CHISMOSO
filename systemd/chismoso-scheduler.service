@@ -1,0 +1,48 @@
+[Unit]
+Description=CHISMOSO continuous topic scheduler
+Documentation=https://github.com/chismoso/chismoso
+After=network.target chismoso.service
+Wants=chismoso.service
+
+[Service]
+Type=simple
+User=chismoso
+Group=chismoso
+
+WorkingDirectory=/opt/chismoso/chismoso
+EnvironmentFile=/opt/chismoso/.env.production
+
+# The scheduler re-investigates a fixed list of topics on a fixed interval.
+# See chismoso/src/scheduler/run.ts and chismoso/src/scheduler/index.ts for
+# the runtime contract. Logs are appended to data/scheduler.log AND to
+# stdout (so journal captures them too).
+ExecStart=/usr/bin/node /opt/chismoso/chismoso/dist/scheduler/run.js
+
+# The scheduler already registers SIGTERM / SIGINT handlers itself
+# (chismoso/src/scheduler/run.ts:74-88) — it stops the TopicScheduler,
+# closes the DB, and exits 0. systemd sees a clean exit and waits for
+# the next start.
+Restart=on-failure
+RestartSec=10s
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# Scheduler doesn't run user-facing requests; give it 30s to drain like
+# the main server.
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=chismoso-scheduler
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/opt/chismoso/chismoso/data /opt/chismoso/download /var/log/chismoso
+
+[Install]
+WantedBy=multi-user.target

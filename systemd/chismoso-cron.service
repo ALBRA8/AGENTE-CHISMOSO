@@ -1,0 +1,31 @@
+[Unit]
+Description=CHISMOSO nightly SQLite backup
+Documentation=https://github.com/chismoso/chismoso
+After=chismoso.service
+Wants=chismoso.service
+
+[Service]
+Type=oneshot
+User=chismoso
+Group=chismoso
+
+EnvironmentFile=/opt/chismoso/.env.production
+
+ExecStart=/opt/chismoso/scripts/backup-sqlite.sh
+
+# Backup is a stop-the-world `.backup` command against the SQLite file
+# (does NOT require stopping the chismoso service — see backup script
+# for details). 10 min is plenty for a <10 MB DB; the audit suggests the
+# ceiling at 100 MB which is ~30s on local disk.
+TimeoutStartSec=600
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=chismoso-cron-backup
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/backups/chismoso /var/log/chismoso /opt/chismoso/chismoso/data

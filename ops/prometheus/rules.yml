@@ -1,0 +1,165 @@
+# CHISMOSO V1.5 — Prometheus alerting rules (Task R2-IMP-OBS P0-6).
+#
+# The 10 alerting rules below are lifted verbatim from docs/ALERTING.md
+# §"Alert rules" so what ships matches what the operator reads in the
+# runbook. Drop into /etc/prometheus/rules/chismoso.yml and reload
+# Prometheus (`kill -HUP $(pidof prometheus)` or
+# `curl -X POST http://localhost:9090/-/reload`).
+#
+# Deployment: the docker-compose.monitoring.yml `prometheus` service
+# mounts this file at /etc/prometheus/rules/chismoso.yml via a bind
+# mount, so the rules ship with the container.
+#
+# Severity conventions (matching docs/ALERTING.md):
+#   P1 = page (wake the on-call — the SLO is being burned NOW)
+#   P2 = ticket (a P1 precursor — the SLO will be burned soon if no action)
+#   P3 = dashboard (informational — for the morning standup)
+
+groups:
+  - name: chismoso
+    interval: 30s
+    rules:
+
+      # 1. high_5xx_rate (P1) — core availability SLO (#3).
+      - alert: high_5xx_rate
+        expr: |
+          (
+            sum(rate(chismoso_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(chismoso_http_requests_total[5m])), 0.001)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: P1
+          team: chismoso
+        annotations:
+          summary: "5xx rate > 1% for 5 min"
+          description: "5xx responses are {{ $value | humanizePercentage }} of total over the last 5 min."
+          runbook: "docs/RUNBOOK.md#7-high-error-rate-5xx--1"
+
+      # 2. high_p95_latency (P1) — SLO #2.
+      - alert: high_p95_latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(chismoso_http_request_duration_seconds_bucket{route="/api/investigate"}[5m])
+            )
+          ) > 5
+        for: 5m
+        labels:
+          severity: P1
+          team: chismoso
+        annotations:
+          summary: "p95 latency on /api/investigate > 5s"
+          description: "p95 = {{ $value }}s over the last 5 min (SLO: 5s)."
+          runbook: "docs/RUNBOOK.md#8-sqlite-db-lock-contention-sqlite_busy"
+
+      # 3. db_connections_saturated (P2) — leading indicator of connection leaks.
+      - alert: db_connections_saturated
+        expr: chismoso_db_connections > 10
+        for: 5m
+        labels:
+          severity: P2
+          team: chismoso
+        annotations:
+          summary: "DB connection count > 10"
+          description: "{{ $value }} connections open (expected 1-2)."
+          runbook: "docs/RUNBOOK.md#5-memory-leak-slow-rss-growth"
+
+      # 4. circuit_breaker_open (P1) — LLM provider unreachable.
+      - alert: circuit_breaker_open
+        expr: chismoso_circuit_breaker_state{breaker="llm"} == 2
+        for: 60s
+        labels:
+          severity: P1
+          team: chismoso
+        annotations:
+          summary: "LLM circuit breaker OPEN for > 60s"
+          description: "LLM provider is unreachable; investigations are failing fast."
+          runbook: "docs/RUNBOOK.md#2-llm-provider-outage"
+
+      # 5. readyz_failing (P1) — process alive but not ready.
+      - alert: readyz_failing
+        expr: chismoso_readyz_probe_success == 0
+        for: 2m
+        labels:
+          severity: P1
+          team: chismoso
+        annotations:
+          summary: "/api/readyz returning 503 for > 2 min"
+          description: "Process is alive (livez OK) but not ready to serve."
+          runbook: "docs/RUNBOOK.md#1-db-loss--sqlite-corruption"
+
+      # 6. backup_job_failure (P2) — safety net for DB corruption.
+      - alert: backup_job_failure
+        expr: |
+          time() - chismoso_backup_job_last_success_timestamp_seconds > 5400
+        for: 5m
+        labels:
+          severity: P2
+          team: chismoso
+        annotations:
+          summary: "DB backup job hasn't succeeded in > 90 min"
+          description: "Last successful backup: {{ $value | humanizeDuration }} ago."
+          runbook: "docs/RUNBOOK.md#1-db-loss--sqlite-corruption"
+
+      # 7. disk_usage_high (P2) — disk full is incident #6.
+      - alert: disk_usage_high
+        expr: |
+          (1 - node_filesystem_avail_bytes{mountpoint="/var/log/chismoso"}
+               / node_filesystem_size_bytes{mountpoint="/var/log/chismoso"}) > 0.80
+        for: 5m
+        labels:
+          severity: P2
+          team: chismoso
+        annotations:
+          summary: "Disk usage on /var/log/chismoso > 80%"
+          description: "{{ $value | humanizePercentage }} used (SLO threshold: 80%)."
+          runbook: "docs/RUNBOOK.md#6-disk-full"
+
+      # 8. slo_burn_rate_fast (P1) — acute outage not caught by #1.
+      - alert: slo_burn_rate_fast
+        expr: |
+          (
+            sum(rate(chismoso_http_requests_total{status=~"5.."}[1h]))
+            /
+            clamp_min(sum(rate(chismoso_http_requests_total[1h])), 0.001)
+          ) > 0.144
+        for: 5m
+        labels:
+          severity: P1
+          team: chismoso
+        annotations:
+          summary: "SLO burn rate > 14.4x over 1h"
+          description: "At this rate, the monthly error budget is exhausted in ~14 days."
+          runbook: "docs/RUNBOOK.md#7-high-error-rate-5xx--1"
+
+      # 9. slo_burn_rate_slow (P2) — chronic degradation.
+      - alert: slo_burn_rate_slow
+        expr: |
+          (
+            sum(rate(chismoso_http_requests_total{status=~"5.."}[3d]))
+            /
+            clamp_min(sum(rate(chismoso_http_requests_total[3d])), 0.001)
+          ) > 0.03
+        for: 30m
+        labels:
+          severity: P2
+          team: chismoso
+        annotations:
+          summary: "SLO burn rate > 3x over 3 days"
+          description: "Chronic 5xx rate — investigate the cause before it burns the full budget."
+          runbook: "docs/RUNBOOK.md#7-high-error-rate-5xx--1"
+
+      # 10. process_down (P1) — process or host is unreachable.
+      - alert: process_down
+        expr: up{job="chismoso"} == 0
+        for: 2m
+        labels:
+          severity: P1
+          team: chismoso
+        annotations:
+          summary: "CHISMOSO process unreachable for 2 min"
+          description: "Prometheus can't scrape /api/metrics. Check livez + readyz."
+          runbook: "docs/RUNBOOK.md#3-process-crash--oom"

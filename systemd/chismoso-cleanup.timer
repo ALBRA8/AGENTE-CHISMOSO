@@ -1,0 +1,13 @@
+[Unit]
+Description=CHISMOSO nightly reports cleanup timer
+Documentation=https://github.com/chismoso/chismoso
+
+[Timer]
+# Run at 04:00 daily — after the backup so we don't delete reports
+# that the backup is still trying to copy.
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

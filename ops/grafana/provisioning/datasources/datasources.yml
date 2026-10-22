@@ -1,0 +1,46 @@
+# CHISMOSO V1.5 — Grafana datasources (auto-provisioned).
+#
+# Grafana reads this file on first boot and creates the Prometheus +
+# Loki datasources automatically — no manual UI setup needed.
+#
+# The provisioning API replaces these on every restart, so changes
+# made via the Grafana UI are lost. To make a permanent change, edit
+# this file and restart Grafana.
+
+apiVersion: 1
+
+datasources:
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # `prometheus` is the docker-compose service name in the
+    # monitoring network. Grafana resolves it via Docker's DNS.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      # 30s matches the prometheus scrape_interval for the chismoso
+      # job. Setting this avoids the Grafana warning about a
+      # mismatched timeRange when drilling down.
+      timeInterval: "30s"
+      httpMethod: POST
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    jsonData:
+      # 30s matches Loki's evaluation_interval.
+      maxLines: 1000
+
+  - name: Alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    editable: true
+    jsonData:
+      # Alertmanager's HTTP API path. v2 is the current stable API.
+      implementation: prometheus
+      handlingGroupBy: true

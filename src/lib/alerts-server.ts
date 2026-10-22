@@ -582,10 +582,30 @@ export function emitAlertsForAnomalies(anomalies: Anomaly[]): {
       const result = alertManager.emit(a);
       if (result.suppressed) suppressed++;
       else emitted++;
-    } catch {
-      // Persistence failures are non-fatal — the anomaly list is still
-      // returned to the caller. Logged via console.error for visibility.
-      console.error('[alerts] emit failed for', a.topic, a.type);
+    } catch (e) {
+      // P0-4 (R2-IMP-OBS): persistence failures are non-fatal — the
+      // anomaly list is still returned to the caller. Log structured
+      // JSON (matching the chismoso logger format) so Promtail / Loki
+      // can parse without a regex.
+      //
+      // PII: `a.topic` is the user-supplied investigation objective
+      // string (potentially PII) — DO NOT include it verbatim. The
+      // anomaly `id` and `type` are safe identifiers (system-generated).
+      // The error message is sanitised by the chismoso logger when
+      // it goes through `logger.error`; here we're using a plain
+      // structured console.error so we redact PII manually by simply
+      // NOT including the topic.
+      console.error(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'ERROR',
+        msg: 'alerts_emit_failed',
+        anomaly_id: a.id,
+        type: a.type,
+        err: e instanceof Error ? {
+          name: e.name,
+          message: e.message,
+        } : String(e),
+      }));
     }
   }
   return { emitted, suppressed };

@@ -122,19 +122,34 @@ export const POST = authedPOST(async (req: NextRequest) => {
 
     // Exit code 3 = "not found" (chismoso convention).
     if (result.code === 3) {
+      // R2-IMP-SEC (audit H-7): the `stderr_tail` field is gated on
+      // NODE_ENV !== 'production'. The CLI's stderr contains absolute
+      // paths and provider echoes — leaking it on a 404 would
+      // disclose the internal layout of the chismoso CLI for no real
+      // operational benefit (operators get the same triage info
+      // from the server-side log keyed by `id`).
       return apiError(404, `Memory not found: ${id}`, {
         action,
         id,
-        stderr_tail: result.stderr.split('\n').slice(-10).join('\n'),
+        ...(process.env.NODE_ENV !== 'production'
+          ? { stderr_tail: result.stderr.split('\n').slice(-10).join('\n') }
+          : {}),
       });
     }
 
     if (result.code !== 0) {
+      // R2-IMP-SEC (audit H-7): in production the `details` field is
+      // sanitized by apiServerError() — the caller sees only
+      // `{ correlationId, message }`. The original `stderr` + `id`
+      // are forwarded to Sentry + stdout. In dev the operator sees
+      // the raw stderr for triage.
       return apiServerError('memory_action_failed', {
         action,
         id: id || null,
         exitCode: result.code,
-        stderr: result.stderr.split('\n').slice(-50).join('\n'),
+        ...(process.env.NODE_ENV !== 'production'
+          ? { stderr: result.stderr.split('\n').slice(-50).join('\n') }
+          : {}),
         ranAt: new Date().toISOString(),
       });
     }
@@ -155,11 +170,15 @@ export const POST = authedPOST(async (req: NextRequest) => {
       result: parsed ?? { raw: result.stdout.trim() },
     });
   } catch (e: unknown) {
+    // R2-IMP-SEC (audit H-7): in production apiServerError() sanitizes
+    // the `details` to `{ correlationId, message }` — `e.message` is
+    // logged server-side + Sentry only, never returned to the client.
+    // In dev we still surface `message` so the operator sees what blew up.
     const message = e instanceof Error ? e.message : String(e);
     return apiServerError('memory_action_failed', {
       action,
       id: id || null,
-      message,
+      ...(process.env.NODE_ENV !== 'production' ? { message } : {}),
       ranAt: new Date().toISOString(),
     });
   }
@@ -217,7 +236,12 @@ export async function GET() {
       byDomain: Object.fromEntries(byDomain.map((r) => [r.domain, r.n])),
     });
   } catch (e: unknown) {
+    // R2-IMP-SEC (audit H-7): same treatment as the POST path — in
+    // production the `details` is replaced with `{ correlationId,
+    // message }`; in dev the operator sees `e.message` for triage.
     const message = e instanceof Error ? e.message : String(e);
-    return apiServerError('memory_stats_failed', { message });
+    return apiServerError('memory_stats_failed', {
+      ...(process.env.NODE_ENV !== 'production' ? { message } : {}),
+    });
   }
 }

@@ -1,0 +1,150 @@
+# CHISMOSO V1.5 — Promtail config (Task R2-IMP-OBS P0-5).
+#
+# Ships structured JSON log lines from /var/log/chismoso/*.log AND the
+# systemd journal (for the chismoso.service unit) into Loki at
+# http://loki:3100/api/prom/push.
+#
+# The chismoso logger (chismoso/src/logger.ts) emits one JSON object per
+# log line with fields: ts, level, msg, trace_id, + arbitrary ctx.
+# Promtail parses that JSON, extracts `level` and `trace_id` as labels
+# (for LogQL filtering), and uses the `ts` field as the line timestamp
+# (so Loki's timestamp matches the application clock, not the moment
+# Promtail scraped the line).
+#
+# Deploy:
+#   sudo cp ops/promtail/promtail-config.yml /etc/promtail/config.yml
+#   sudo systemctl restart promtail
+#
+# Or via docker-compose.monitoring.yml (the `promtail` service mounts
+# this file + /var/log + /var/run/docker.sock into the container).
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+  # Don't log to file — log to stdout so `docker logs promtail` works.
+  log_file: ""
+
+positions:
+  # Promtail remembers where it left off per file. Persisted to disk so
+  # a restart doesn't re-ship the entire log history.
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/api/prom/push
+    # Loki's default tenant is "default". Multi-tenancy is opt-in via
+    # X-Scope-OrgID — leave the default for V1.5 (single-tenant).
+    tenant_id: default
+    # Backoff config — tolerate transient Loki unavailability.
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    # Batch size: ship up to 100 lines / 1 MiB per request.
+    batchwait: 1s
+    batchsize: 1048576
+
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # 1. CHISMOSO application logs (JSON lines).
+  # ---------------------------------------------------------------------------
+  # The Next.js process writes to /var/log/chismoso/server.log via the
+  # systemd unit's `StandardOutput=append:/var/log/chismoso/server.log`.
+  # The chismoso scheduler service writes to /var/log/chismoso/scheduler.log
+  # via `fileAppendedLogger` in chismoso/src/scheduler/index.ts. Both
+  # files are JSON-line format (one log entry per line).
+  - job_name: chismoso_app
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: chismoso
+          # `service` label lets us group the app + scheduler under one
+          # umbrella in LogQL queries (e.g. {service="chismoso"}).
+          service: chismoso
+          __path__: /var/log/chismoso/*.log
+    pipeline_stages:
+      # 1. Parse the JSON log line into structured fields.
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            msg: msg
+            trace_id: trace_id
+            # Stash extra fields for downstream stages / LogQL.
+            # The `stream` selector below uses `level` + `trace_id`;
+            # `msg` is exposed for `| json | msg="..."` queries.
+      # 2. Promote `level` + `trace_id` into labels (so LogQL can
+      #    filter by them without a `| json` pipeline stage every
+      #    time). Cardinality: level has 4 values (DEBUG/INFO/WARN/
+      #    ERROR), trace_id has high cardinality — only enable it
+      #    if your Loki retention can handle the cardinality, which
+      #    is the case for V1.5 (low traffic + 30-day retention).
+      - labels:
+          level:
+          trace_id:
+      # 3. Use the application timestamp (not the scrape timestamp).
+      #    `ts` is an ISO 8601 string in the JSON log; Promtail parses
+      #    RFC3339 natively. Setting the line's timestamp here means
+      #    Loki's TS is the actual log event time, not the moment
+      #    Promtail scraped it (which can lag by up to 10s due to
+      #    scraping).
+      - timestamp:
+          source: ts
+          format: RFC3339Nano
+          # Drop the line entirely if the timestamp can't be parsed
+          # (don't fall back to scrape time — that would silently
+          # misorder logs in the Loki store).
+          action_on_failure: skip
+
+  # ---------------------------------------------------------------------------
+  # 2. systemd journal (chismoso*.service units).
+  # ---------------------------------------------------------------------------
+  # The systemd units (chismoso.service, chismoso-scheduler.service,
+  # chismoso-cron.service, chismoso-cleanup.service) emit logs to the
+  # journal. The journal is the canonical source for early-boot logs
+  # (before the app's JSON logger is wired up) + crash logs (when the
+  # app dies before flushing the JSON log buffer).
+  - job_name: chismoso_journal
+    journal:
+      # Only scrape the chismoso* units — the journal also contains
+      # kernel logs, cron, ssh, etc. which we don't want in Loki
+      # (volume + privacy concerns).
+      matches: _SYSTEMD_UNIT=chismoso.service
+      labels:
+        job: chismoso
+        service: chismoso
+        source: journal
+      # Keep the journal entry's timestamp (not the scrape time).
+      use_old_timestamp: true
+    pipeline_stages:
+      # Journal entries are not JSON — they're free-text. But the
+      # chismoso app writes JSON to stdout, which journald captures
+      # verbatim in the MESSAGE field. Try to parse it as JSON; if
+      # that fails (kernel log line, non-chismoso unit, etc.) drop
+      # the line to keep Loki clean.
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            msg: msg
+            trace_id: trace_id
+          # `on_error` keeps the line in the pipeline (with empty
+          # extracted values) so we can still label it as a journal
+          # entry. The `drop_malformed` alternative would silently
+          # discard non-JSON journal entries (kernel logs, etc.).
+          on_error: keep
+      - labels:
+          level:
+          trace_id:
+
+limits_config:
+  # Drop high-cardinality labels that would explode Loki's index.
+  # `trace_id` is high-cardinality but useful — keep it (V1.5 traffic
+  # is low; the index cost is acceptable).
+  # The `reject_old_samples` setting drops entries with timestamps
+  # more than 1 week in the past (so a stale positions file can't
+  # flood Loki with backfilled data on restart).
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h

@@ -1,23 +1,39 @@
 /**
- * CHISMOSO V1.0 — Middleware helper (spec §34, audit C2)
+ * CHISMOSO V1.5 — Route-handler wrappers (Task IMP-PROD-SEC, audit C-1, C-2, H-2)
  *
  * Tiny wrappers around `withAuth` for the common Next.js App Router patterns:
  *
- *   - `authedPOST(handler)`     — protect a POST handler.
- *   - `authedPUT(handler)`      — protect a PUT handler.
- *   - `authedDELETE(handler)`   — protect a DELETE handler.
- *   - `authedRoute(handler)`    — protect any HTTP method.
- *   - `optionalAuth(handler)`   — attach auth result to the request for
- *                                  inspection but never reject (useful for
- *                                  GET endpoints that may optionally
- *                                  personalize based on caller identity).
+ *   - `authedPOST(handler)`   — protect a POST handler (session or agent
+ *                               token; CSRF enforced for session callers).
+ *   - `authedPUT(handler)`    — protect a PUT handler.
+ *   - `authedPATCH(handler)`  — protect a PATCH handler.
+ *   - `authedDELETE(handler)` — protect a DELETE handler.
+ *   - `authedRoute(handler)`  — protect any HTTP method.
+ *   - `optionalAuth(handler)` — attach the auth subject to the request
+ *                                but never reject (useful for GET
+ *                                endpoints that may optionally
+ *                                personalize based on caller identity).
  *
- * All helpers respect the `CHISMOSO_AUTH_ENABLED` env var. When disabled
- * (the default), the wrapped handler runs without any auth check.
+ * Auth posture: **fail-closed in production**. In dev (`NODE_ENV !=
+ * 'production'`) the default is `enabled=false` so the dashboard opens
+ * without setup; set `CHISMOSO_AUTH_ENABLED=true` to test the auth flow
+ * locally.
+ *
+ * CSRF (audit H-2): state-changing methods (POST/PUT/PATCH/DELETE)
+ * invoked via a session cookie MUST carry `X-CSRF-Token` matching the
+ * user's per-session bound token. Machine callers (X-Chismoso-Agent)
+ * are CSRF-exempt (they have no browser origin).
+ *
+ * See `src/lib/auth.ts::checkAuth` for the full auth logic.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { withAuth, checkAuth, type AuthCheckResult } from './auth';
+import { withAuth, checkAuth, type AuthCheckResult, type AuthSubject } from './auth';
+import {
+  getTraceIdFromHeaders,
+  generateTraceId,
+  runWithTraceId,
+} from './trace-id';
 
 type RouteHandler = (
   req: NextRequest,
@@ -78,7 +94,13 @@ export function optionalAuth(handler: RouteHandler): RouteHandler {
   return async (req, ctx) => {
     const result = checkAuth(req);
     (req as any).__authResult = result;
-    return handler(req, ctx);
+    (req as any).__authSubject = result.subject ?? { kind: 'anonymous' };
+    // P0-1 (R2-IMP-OBS): install the AsyncLocalStorage trace-ID scope
+    // so any code path inside `handler` (audit-log-server, sentry,
+    // the chismoso CLI subprocess env) can call `getCurrentTraceId()`
+    // and get the request's trace ID. Same pattern as `withAuth`.
+    const traceId = getTraceIdFromHeaders(req.headers) ?? generateTraceId();
+    return runWithTraceId(traceId, () => handler(req, ctx));
   };
 }
 
@@ -93,6 +115,18 @@ export function getAuthStatus(req: NextRequest): AuthCheckResult {
     (req as any).__authResult ?? {
       ok: false,
       reason: 'not_checked' as const,
+    }
+  );
+}
+
+/**
+ * Retrieves the auth subject attached by `optionalAuth` or `withAuth`.
+ * Returns `{ kind: 'anonymous' }` when no auth check ran.
+ */
+export function getAuthSubject(req: NextRequest): AuthSubject {
+  return (
+    (req as any).__authSubject ?? {
+      kind: 'anonymous' as const,
     }
   );
 }

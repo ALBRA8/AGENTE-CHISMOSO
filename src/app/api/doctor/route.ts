@@ -55,6 +55,7 @@ import { NextRequest } from 'next/server';
 import { apiOk, apiServerError } from '@/lib/api-response';
 import { getCached, setCached, invalidate } from '@/lib/cache';
 import { authedPOST } from '@/lib/middleware';
+import { requireRole } from '@/lib/require-role';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -208,8 +209,13 @@ export async function GET(req: NextRequest) {
     }
     return apiOk({ ...report, cached: false });
   } catch (e: unknown) {
+    // R2-IMP-SEC (audit H-7): in production apiServerError() replaces
+    // the `details` with `{ correlationId, message }` — `e.message`
+    // is logged server-side + Sentry only, never returned to the client.
     const message = e instanceof Error ? e.message : String(e);
-    return apiServerError('doctor_run_failed', { message });
+    return apiServerError('doctor_run_failed', {
+      ...(process.env.NODE_ENV !== 'production' ? { message } : {}),
+    });
   }
 }
 
@@ -235,8 +241,17 @@ export async function GET(req: NextRequest) {
  * requests must carry a valid `X-Chismoso-Agent` header. Without ?fix=true the
  * POST is read-only (calls GET), but we still require auth so an anonymous
  * caller cannot probe the doctor surface.
+ *
+ * R2-IMP-SEC (audit R2-8): the POST handler is gated on
+ * `role === 'admin'` via `requireRole('admin')` composed inside
+ * `authedPOST`. The doctor's --fix path mutates the chismoso DB
+ * (CREATE TABLE / mkdir) and a non-admin operator should not be able
+ * to trigger that. The read-only GET remains open to any authenticated
+ * operator (operators need to SEE the doctor report — they just can't
+ * APPLY fixes). Dev (auth disabled) bypasses the gate so the dashboard
+ * opens without provisioning an admin user.
  */
-export const POST = authedPOST(async (req: NextRequest) => {
+export const POST = authedPOST(requireRole('admin')(async (req: NextRequest) => {
   const url = new URL(req.url);
   const fixRequested = url.searchParams.get('fix') === 'true';
 
@@ -254,7 +269,12 @@ export const POST = authedPOST(async (req: NextRequest) => {
     invalidate('doctor:report');
     return apiOk(report);
   } catch (e: unknown) {
+    // R2-IMP-SEC (audit H-7): in production apiServerError() replaces
+    // the `details` with `{ correlationId, message }` — `e.message`
+    // is logged server-side + Sentry only, never returned to the client.
     const message = e instanceof Error ? e.message : String(e);
-    return apiServerError('doctor_fix_failed', { message });
+    return apiServerError('doctor_fix_failed', {
+      ...(process.env.NODE_ENV !== 'production' ? { message } : {}),
+    });
   }
-});
+}));

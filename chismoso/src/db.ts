@@ -308,6 +308,52 @@ CREATE INDEX IF NOT EXISTS idx_skill_inv_invoked_at ON skill_invocations(invoked
 `;
 
 /**
+ * SCHEMA_V6 — Audit log (Task IMP-PROD-OBS, P0-5).
+ *
+ * Append-only table recording "who did what, when, from where".
+ * The audit log is the security/compliance trail (GDPR Article 30):
+ *
+ *   - actor (user ID or 'agent:chismoso' for autonomous runs)
+ *   - action ('investigate', 'login.success', 'alert.ack',
+ *              'skill.invoke', etc.)
+ *   - target_type + target_id (e.g. ('alert', 'alert_abc123'))
+ *   - ip + user_agent (for forensics — caller identity)
+ *   - trace_id (joins with the structured logger's trace_id field)
+ *   - metadata_json (free-form per-action context)
+ *
+ * Writes go through `AuditLog.append()` which NEVER updates — it only
+ * INSERTs. Reads go through `AuditLog.query()` which supports filter
+ * by actor / action / since-timestamp / limit.
+ *
+ * The table is intentionally NOT tamper-proof (a process with write
+ * access to the SQLite file can UPDATE/DELETE). For V2, mirror to
+ * append-only object storage (S3 + Object Lock) for true
+ * non-repudiation.
+ *
+ * Indexes back the common queries:
+ *   - timestamp DESC  — /api/audit-log?since=… "recent first"
+ *   - actor           — "what did user X do?"
+ *   - action          — "show me all alert.ack events"
+ */
+const SCHEMA_V6 = `
+CREATE TABLE IF NOT EXISTS audit_log (
+  id              TEXT PRIMARY KEY,
+  timestamp       TEXT NOT NULL,
+  actor           TEXT NOT NULL,
+  action          TEXT NOT NULL,
+  target_type     TEXT,
+  target_id       TEXT,
+  ip              TEXT,
+  user_agent      TEXT,
+  trace_id        TEXT,
+  metadata_json   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+`;
+
+/**
  * SCHEMA_V2 — performance indexes added after the AUDIT-PERF review.
  *
  * Idempotent (`IF NOT EXISTS`) so existing DBs gain the new indexes on the
@@ -527,13 +573,34 @@ export class ChismosoDB {
       mkdirSync(dirname(config.path), { recursive: true });
     }
     this.db = new Database(config.path);
+    // --- REL-P0-007 — SQLite WAL pragmas for safe concurrent access -----------
+    // journal_mode=WAL allows N readers + 1 writer concurrently. Without it,
+    // every read from /api/* while the CLI is writing would block the whole
+    // Next.js event loop with SQLITE_BUSY.
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    // busy_timeout: SQLite blocks up to 5s waiting for a writer lock instead
+    // of throwing SQLITE_BUSY synchronously. The orchestrator's repositories
+    // all run `db.prepare(...).run(...)` synchronously, so without this pragma
+    // two concurrent investigations racing for the writer lock would crash
+    // the second one.
+    this.db.pragma('busy_timeout = 5000');
+    // synchronous=NORMAL is safe under WAL (the WAL itself is fsync'd on
+    // checkpoint) and ~10x faster than the default FULL. Without this every
+    // commit pays a full fsync on the main DB file.
+    this.db.pragma('synchronous = NORMAL');
+    // 64MB page cache — reduces disk I/O for hot reads (signals, evidence,
+    // trends) under load. Default is 2MB which thrashes on /api/anomalies.
+    this.db.pragma('cache_size = -64000');
+    // Auto-checkpoint the WAL every 1000 pages (~4MB) — default, set
+    // explicitly so we don't get an unbounded WAL under burst write traffic.
+    this.db.pragma('wal_autocheckpoint = 1000');
     this.db.exec(SCHEMA_V1);
     this.db.exec(SCHEMA_V2);
     this.db.exec(SCHEMA_V3);
     this.db.exec(SCHEMA_V4);
     this.db.exec(SCHEMA_V5);
+    this.db.exec(SCHEMA_V6);
     applyV5ColumnExtensions(this.db);
     this.db.prepare('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)').run('version', '1.0');
     logger.info('ChismosoDB initialized', { path: config.path });

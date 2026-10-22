@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
 import { alertRepository } from '@/lib/alerts-server';
 import { apiOk, apiBadRequest, apiNotFound, apiServerError } from '@/lib/api-response';
-import { authedPOST } from '@/lib/middleware';
+import { authedPOST, getAuthStatus } from '@/lib/middleware';
+import { getClientIP } from '@/lib/rate-limit';
+import { appendAudit } from '@/lib/audit-log-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,6 +88,22 @@ export const POST = authedPOST(async (
     if (!existing) return apiNotFound('alert_not_found');
 
     alertRepository.resolve(id, note);
+
+    // Append audit log entry — fire-and-forget.
+    const authStatus = getAuthStatus(req);
+    const actor =
+      authStatus.ok && authStatus.reason !== 'auth_disabled'
+        ? `user:operator`
+        : 'operator';
+    appendAudit({
+      actor,
+      action: 'alert.resolve',
+      target_type: 'alert',
+      target_id: id,
+      ip: getClientIP(req),
+      user_agent: req.headers.get('user-agent') ?? undefined,
+      metadata: { resolution_note: note, alert_topic: existing.topic },
+    });
 
     const updated = alertRepository.findById(id);
     if (!updated) {

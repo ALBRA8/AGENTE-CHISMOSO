@@ -1,0 +1,110 @@
+# =============================================================================
+# CHISMOSO V1.5 — docker-compose.prod.yml (production overrides)
+# Task IMP-PROD-OPS, audit PROD-AUDIT-OPS P0-2.
+#
+# Apply on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Adds:
+#   - restart: always (instead of unless-stopped) — auto-recover on host reboot
+#   - per-service resource limits (CPU + memory) — prevents runaway LLM calls
+#     or scheduler loops from OOM-killing the host
+#   - json-file log driver with rotation — prevents disk fill from app logs
+#   - read-only root FS + tmpfs for /tmp where possible
+#   - security_opt: no-new-privileges (kernel hardening)
+# =============================================================================
+
+# Log rotation shared across services. 10 MB per file, 3 files = 30 MB max
+# per service. Operators can `docker compose logs -f app` for live tailing.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Resource limits are conservative for a 4 GB / 2 vCPU VPS (audit recommendation).
+# Tune up if you have a beefier host.
+x-resources-app: &default-resources-app
+  limits:
+    cpus: "2.0"
+    memory: 1G
+  reservations:
+    cpus: "0.5"
+    memory: 256M
+
+services:
+  app:
+    restart: always
+    logging: *default-logging
+    deploy:
+      resources: *default-resources-app
+    security_opt:
+      - no-new-privileges:true
+    # Don't publish :3000 externally in prod — Caddy handles edge TLS.
+    # Internal port is reachable on the chismoso_net network only.
+    ports: []
+    # Healthcheck unchanged from base; production runs the same image.
+
+  chismoso-scheduler:
+    restart: always
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    security_opt:
+      - no-new-privileges:true
+
+  chismoso-backup:
+    restart: always
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    restart: always
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    restart: always
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+    security_opt:
+      - no-new-privileges:true
+    # Audit PROD-AUDIT-OPS §P0-2: in prod, only 443 is exposed externally.
+    # Port 80 (HTTP) is closed at the edge — http→https redirect + ACME
+    # http-01 challenge are handled by the upstream LB / Cloudflare proxy.
+    # If you don't have an upstream LB and still need automatic Let's Encrypt
+    # certs via http-01, set `CADDY_EXPOSE_80=1` and override this back to
+    # `["80:80", "443:443"]`.
+    ports:
+      - "443:443"

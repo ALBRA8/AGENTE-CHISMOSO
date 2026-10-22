@@ -1,8 +1,8 @@
-import { NextRequest } from 'next/server';
-import { spawn } from 'node:child_process';
+import { NextRequest, NextResponse } from 'next/server';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
-import { apiBadRequest, apiRateLimited } from '@/lib/api-response';
+import { apiBadRequest, apiRateLimited, apiUnavailable } from '@/lib/api-response';
 import {
   validateObjective,
   validateGeography,
@@ -10,6 +10,9 @@ import {
   validateMaxRuntimeMs,
 } from '@/lib/validation';
 import { authedPOST, authedRoute } from '@/lib/middleware';
+import { investigateSemaphore } from '@/lib/concurrency';
+import { onShutdown, isShuttingDown } from '@/lib/graceful-shutdown';
+import { getCurrentTraceId, TRACE_ID_ENV } from '@/lib/trace-id';
 
 /**
  * SSE streaming endpoint for live investigation progress.
@@ -41,6 +44,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
+const RETRY_AFTER_SEC = 30;
 
 /**
  * Pre-compiled CLI is preferred (faster startup — no TS compilation per call).
@@ -81,7 +85,11 @@ function parseParams(
   };
 }
 
-function runInvestigationStream(params: InvestigateParams, signal: AbortSignal): Response {
+function runInvestigationStream(
+  params: InvestigateParams,
+  signal: AbortSignal,
+  releaseSlot: () => void,
+): Response {
   const { objective, geography, maxQueries, maxRuntimeMs } = params;
 
   // Build CLI args. We pass --save so reports are persisted to disk too.
@@ -106,6 +114,7 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
+      let child: ChildProcess | null = null;
 
       const send = (event: string, data: unknown) => {
         if (closed) return;
@@ -129,11 +138,17 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
 
       send('stage', { stage: 'spawning', objective, geography, maxQueries, maxRuntimeMs });
 
-      const child = spawn(childCmd, childArgs, {
+      child = spawn(childCmd, childArgs, {
         cwd: CHISMOSO_ROOT,
         // INFO so the logger.info() milestone lines (Clustering complete, Trend
         // detected, etc.) are emitted. They go to stdout as JSON.
-        env: { ...process.env, CHISMOSO_LOG_LEVEL: 'INFO' },
+        env: {
+          ...process.env,
+          CHISMOSO_LOG_LEVEL: 'INFO',
+          // Propagate the trace_id to the subprocess so the chismoso
+          // logger can include it in every log line.
+          [TRACE_ID_ENV]: getCurrentTraceId() ?? 'no-trace',
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -141,14 +156,39 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
       // the tab, navigates away, network drops) the request signal fires
       // 'abort'. We kill the spawned CLI promptly so it stops consuming
       // provider quota and CPU for a stream no one is reading.
-      const abortListener = () => {
+      const killChild = () => {
+        if (!child) return;
         try { child.kill('SIGTERM'); } catch { /* ignore */ }
         // Give it 2s to clean up gracefully, then SIGKILL.
         setTimeout(() => {
+          if (!child) return;
           try { child.kill('SIGKILL'); } catch { /* ignore */ }
-        }, 2000);
+        }, 2000).unref?.();
       };
+      const abortListener = () => killChild();
       signal.addEventListener('abort', abortListener);
+
+      // REL-P0-004 — also kill the child on SIGTERM/SIGINT received by the
+      // Next.js process (deploy roll, container stop, OOM-kill graceful).
+      // Without this the child outlives the parent for up to 5 min and keeps
+      // consuming provider quota for a stream no one will read.
+      //
+      // REL2-P1-3 — also proactively close the SSE stream controller so the
+      // client gets a clean end-of-stream (`event: shutdown` + close frame)
+      // instead of a hung connection that the LB has to time out. The
+      // `killChild()` call SIGTERMs the child which would eventually fire
+      // `child.on('close')` → `finalize()` → `closeStream()` — but that
+      // path takes 2+ seconds (SIGTERM grace) and `process.exit()` may
+      // truncate the response before it fires. Closing the stream here
+      // means the client receives the shutdown event immediately and can
+      // reconnect to a different instance behind the LB. The hook is
+      // unregistered when the stream closes naturally (in `finalize`)
+      // so it won't fire on a stream that's already gone.
+      const unregisterShutdown = onShutdown(() => {
+        send('shutdown', { reason: 'server_shutdown', ts: new Date().toISOString() });
+        killChild();
+        closeStream();
+      });
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
@@ -271,13 +311,16 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
         }
       };
 
-      child.stdout.on('data', (d: Buffer) => onChunk(d, 'stdout'));
-      child.stderr.on('data', (d: Buffer) => onChunk(d, 'stderr'));
+      // stdio is ['ignore','pipe','pipe'] so stdout/stderr are guaranteed
+      // non-null at runtime — but the type system can't prove it. Defensive
+      // guards keep tsc happy without changing runtime behavior.
+      if (child.stdout) child.stdout.on('data', (d: Buffer) => onChunk(d, 'stdout'));
+      if (child.stderr) child.stderr.on('data', (d: Buffer) => onChunk(d, 'stderr'));
 
       // Safety timeout: kill child after maxRuntimeMs + 30s grace.
       const timeout = setTimeout(() => {
         try {
-          child.kill('SIGTERM');
+          child?.kill('SIGTERM');
         } catch {
           /* ignore */
         }
@@ -290,11 +333,14 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
       const finalize = (code: number | null) => {
         clearTimeout(timeout);
         signal.removeEventListener('abort', abortListener);
+        unregisterShutdown();
         // Flush any trailing buffered lines (no final newline).
         if (stdoutBuffer.length > 0) handleLine(stdoutBuffer, 'stdout');
         if (stderrBuffer.length > 0) handleLine(stderrBuffer, 'stderr');
         send('done', { code: code ?? -1, investigationId });
         closeStream();
+        // Release the concurrency slot — always, success or failure.
+        releaseSlot();
       };
 
       child.on('error', (err) => {
@@ -326,8 +372,18 @@ function runInvestigationStream(params: InvestigateParams, signal: AbortSignal):
  * (used by the browser-native EventSource API) is left open in V1 because
  * EventSource cannot send custom headers — operators who need to protect
  * streaming should use POST-based fetch streaming instead.
+ *
+ * V1.5 hardening (REL-P0-003, REL-P0-004): the same `investigateSemaphore`
+ * as the non-streaming POST caps concurrent streams at
+ * CHISMOSO_MAX_CONCURRENT_INVESTIGATIONS. SIGTERM/SIGINT also kills the
+ * spawned child (previously only client-disconnect did).
  */
 export const POST = authedPOST(async (req: NextRequest) => {
+  // --- Drain guard ------------------------------------------------------
+  if (isShuttingDown()) {
+    return apiUnavailable('Server is shutting down');
+  }
+
   // --- Rate limit (per-IP, 5/min) ---------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`stream:${ip}`, LIMITS.stream);
@@ -356,7 +412,35 @@ export const POST = authedPOST(async (req: NextRequest) => {
   if (!params) {
     return apiBadRequest(error ?? 'Invalid params');
   }
-  return runInvestigationStream(params, req.signal);
+
+  // --- REL-P0-3 — Concurrency cap ----------------------------------------
+  if (investigateSemaphore.available === 0) {
+    return NextResponse.json(
+      {
+        error: 'Too many concurrent investigations',
+        details: {
+          retryAfterSec: RETRY_AFTER_SEC,
+          inFlight: investigateSemaphore.inFlight,
+          capacity: investigateSemaphore.capacity,
+          waiting: investigateSemaphore.waiting,
+        },
+      },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(RETRY_AFTER_SEC) },
+      },
+    );
+  }
+  // Acquire before spawning; release happens in finalize() inside the
+  // stream's child close/error handler. If the stream itself fails to start
+  // we release here.
+  const releaseSlot = await investigateSemaphore.acquire();
+  try {
+    return runInvestigationStream(params, req.signal, releaseSlot);
+  } catch (e) {
+    releaseSlot();
+    throw e;
+  }
 });
 
 /**
@@ -373,6 +457,11 @@ export const POST = authedPOST(async (req: NextRequest) => {
  * is open.
  */
 export const GET = authedRoute(async (req: NextRequest) => {
+  // --- Drain guard ------------------------------------------------------
+  if (isShuttingDown()) {
+    return apiUnavailable('Server is shutting down');
+  }
+
   // --- Rate limit (per-IP, 5/min) ---------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`stream:${ip}`, LIMITS.stream);
@@ -395,5 +484,30 @@ export const GET = authedRoute(async (req: NextRequest) => {
   if (!params) {
     return apiBadRequest(error ?? 'Invalid params');
   }
-  return runInvestigationStream(params, req.signal);
+
+  // --- REL-P0-3 — Concurrency cap ----------------------------------------
+  if (investigateSemaphore.available === 0) {
+    return NextResponse.json(
+      {
+        error: 'Too many concurrent investigations',
+        details: {
+          retryAfterSec: RETRY_AFTER_SEC,
+          inFlight: investigateSemaphore.inFlight,
+          capacity: investigateSemaphore.capacity,
+          waiting: investigateSemaphore.waiting,
+        },
+      },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(RETRY_AFTER_SEC) },
+      },
+    );
+  }
+  const releaseSlot = await investigateSemaphore.acquire();
+  try {
+    return runInvestigationStream(params, req.signal, releaseSlot);
+  } catch (e) {
+    releaseSlot();
+    throw e;
+  }
 });
