@@ -11,6 +11,7 @@
 import type { RawItem } from '../providers/base.js';
 import type { Evidence, Signal, SignalType, SourceType, TruthLevel } from '../models.js';
 import { generateId, nowISO, SignalType as ST, TruthLevel as TL } from '../models.js';
+import { detectTechMentions } from './capability-mapping.js';
 
 // ---------------------------------------------------------------------------
 // DETECCIÓN DE TIPO DE SEÑAL (heurística documentada)
@@ -219,6 +220,21 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
     url: item.url,
     evidenceIds: [evidenceId],
   };
+
+  // IMP-CLONA-3 — capability-mapping enrichment: scan the raw snippet for
+  // mentions of known native frameworks (AVFoundation, CoreData, …). When
+  // found, attach a compact `detected_tech` array to the signal metadata so
+  // downstream consumers (opportunities.ts, ficha/builder.ts) can recommend
+  // the corresponding web equivalent without re-scanning the snippet.
+  const techMentions = detectTechMentions(item.snippet);
+  if (techMentions.length > 0) {
+    signal.metadata.detected_tech = techMentions.map((t) => ({
+      framework: t.entry.framework,
+      purpose: t.entry.purpose,
+      web_equivalent: t.entry.web_equivalent,
+      count: t.positions.length,
+    }));
+  }
 
   const evidence: Evidence = {
     id: evidenceId,

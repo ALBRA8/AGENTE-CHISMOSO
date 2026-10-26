@@ -15,7 +15,7 @@
  *   chismoso alerts <subcommand>                          Manage persisted alerts (IMP-4)
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as nodeCrypto from 'node:crypto';
 import { ChismosoDB } from './db.js';
@@ -26,7 +26,10 @@ import { createDefaultToolRegistry, LLMClient, Orchestrator, ReActOrchestrator }
 import { logger, setLogLevel, LogLevel } from './logger.js';
 import { resolveConfig, resolveOutputPath } from './config/index.js';
 import { generateId } from './models.js';
+import type { Opportunity, Trend, Problem } from './models.js';
 import { SkillsCatalog, SkillStatus } from './skills/index.js';
+import { buildFicha } from './ficha/builder.js';
+import { renderFichaMarkdown, FICHAS_DIR } from './ficha/renderer.js';
 import {
   TopicScheduler,
   loadWatchConfig,
@@ -356,6 +359,10 @@ async function main(): Promise<void> {
     return runFeedbackCommand(args, cfg);
   }
 
+  if (cmd === 'fichas') {
+    return runFichasCommand(args, cfg);
+  }
+
   console.error(`Unknown command: ${cmd}`);
   printHelp();
   process.exit(2);
@@ -517,6 +524,14 @@ Feedback subcommands (spec §28, Task IMP-5):
   chismoso feedback list [--type=...] [--target-type=alert] [--target-id=<id>] [--limit=20]
                                                   List recent feedback (most recent first)
   chismoso feedback stats                    Aggregate useful_rate + counts by type/target
+
+Fichas subcommands (Task IMP-CLONA-1 — ClonaKit pattern):
+  chismoso fichas list                       List all persisted FICHA.md files (newest first)
+  chismoso fichas show <opportunity_id>      Print the FICHA markdown for an opportunity
+  chismoso fichas regenerate <opportunity_id>
+                                                  Rebuild the FICHA from the stored Opportunity
+                                                  (calls the LLM if available, falls back to
+                                                  deterministic synthesis)
 
 Doctor subcommands (spec §31, Task IMP-3):
   chismoso doctor                            Run all 14 subsystem checks, print colored summary
@@ -2644,6 +2659,254 @@ function runFeedbackCommand(args: string[], cfg: ReturnType<typeof resolveConfig
   } finally {
     db.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// `chismoso fichas` — manage ClonaKit-style FICHA.md structured specs.
+//
+// FICHA files are produced by the orchestrator at the end of every
+// investigation (one FICHA per persisted Opportunity). They live on disk
+// under /home/z/my-project/download/chismoso/fichas/ficha-<opp_id>.md
+// and serve as the INTERFACE between discovery (CHISMOSO) and
+// construction (a future AGENTE-MVP, a human developer, or an AI like
+// Cursor). They describe WHAT to build, not HOW.
+//
+// Subcommands:
+//   list                       List all persisted FICHA files (newest first)
+//   show <opportunity_id>      Print the FICHA markdown for an opportunity
+//   regenerate <opportunity_id>  Rebuild the FICHA from the stored
+//                              Opportunity (calls the LLM if available,
+//                              falls back to deterministic synthesis)
+// ---------------------------------------------------------------------------
+
+async function runFichasCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): Promise<void> {
+  const sub = args[1] ?? 'list';
+  if (sub === 'list') {
+    return runFichasList(args, cfg);
+  }
+  if (sub === 'show') {
+    return runFichasShow(args, cfg);
+  }
+  if (sub === 'regenerate') {
+    return runFichasRegenerate(args, cfg);
+  }
+  console.error(`Unknown fichas subcommand: ${sub}`);
+  console.error('Available: list, show <opportunity_id>, regenerate <opportunity_id>');
+  process.exit(2);
+}
+
+function runFichasList(_args: string[], _cfg: ReturnType<typeof resolveConfig>): void {
+  let files: string[];
+  try {
+    files = readdirSync(FICHAS_DIR);
+  } catch {
+    console.log(JSON.stringify({ count: 0, fichas: [], dir: FICHAS_DIR }, null, 2));
+    return;
+  }
+  const fichaFiles = files.filter((f) => f.startsWith('ficha-') && f.endsWith('.md'));
+  const items: Array<{ id: string; title: string; oneLiner: string; generatedAt: string; sizeBytes: number; fichaPath: string }> = [];
+  for (const f of fichaFiles) {
+    try {
+      const fichaPath = path.join(FICHAS_DIR, f);
+      const st = statSync(fichaPath);
+      const md = readFileSync(fichaPath, 'utf8');
+      const id = f.replace(/^ficha-/, '').replace(/\.md$/, '');
+      items.push({
+        id,
+        title: extractFichaTitle(md) ?? id,
+        oneLiner: extractFichaSection(md, '## 1. En una frase') ?? '',
+        generatedAt: st.mtime.toISOString(),
+        sizeBytes: st.size,
+        fichaPath,
+      });
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  items.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
+  console.log(JSON.stringify({ count: items.length, dir: FICHAS_DIR, fichas: items }, null, 2));
+}
+
+function runFichasShow(args: string[], _cfg: ReturnType<typeof resolveConfig>): void {
+  const id = args[2];
+  if (!id || !/^[\w-]+$/.test(id)) {
+    console.error('Usage: chismoso fichas show <opportunity_id>');
+    process.exit(2);
+  }
+  const safeId = path.basename(id);
+  const fichaPath = path.join(FICHAS_DIR, `ficha-${safeId}.md`);
+  const resolved = path.resolve(fichaPath);
+  const resolvedBase = path.resolve(FICHAS_DIR);
+  if (!resolved.startsWith(resolvedBase + path.sep)) {
+    console.error('Path traversal detected');
+    process.exit(2);
+  }
+  try {
+    const md = readFileSync(fichaPath, 'utf8');
+    console.log(md);
+  } catch {
+    console.error(`Ficha not found: ${fichaPath}`);
+    console.error('Tip: run `chismoso fichas regenerate <opportunity_id>` to build it on demand,');
+    console.error('     or `chismoso investigate "<objective>"` to generate fichas automatically.');
+    process.exit(3);
+  }
+}
+
+async function runFichasRegenerate(args: string[], cfg: ReturnType<typeof resolveConfig>): Promise<void> {
+  const oppId = args[2];
+  if (!oppId || !/^[\w-]+$/.test(oppId)) {
+    console.error('Usage: chismoso fichas regenerate <opportunity_id>');
+    process.exit(2);
+  }
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  try {
+    const rows = db.prepare('SELECT * FROM opportunities WHERE id = ?').all(oppId) as any[];
+    if (rows.length === 0) {
+      console.error(`Opportunity ${oppId} not found.`);
+      process.exit(3);
+    }
+    const r = rows[0];
+    const opp = hydrateOpportunity(r);
+    // Look up trend + problem from the same investigation, matching by ref.
+    let trend: Trend | undefined;
+    let problem: Problem | undefined;
+    if (r.trend_ref) {
+      const trows = db.prepare('SELECT * FROM trends WHERE id = ?').all(r.trend_ref) as any[];
+      if (trows.length > 0) trend = hydrateTrend(trows[0]);
+    }
+    if (r.problem_ref) {
+      const prows = db.prepare('SELECT * FROM problems WHERE id = ?').all(r.problem_ref) as any[];
+      if (prows.length > 0) problem = hydrateProblem(prows[0]);
+    }
+    const investigationId = r.investigation_id ?? '';
+    const llm = new LLMClient();
+    console.error(`[chismoso] Regenerating FICHA for opportunity ${oppId}...`);
+    const ficha = await buildFicha(
+      {
+        opportunity: opp,
+        trend,
+        problem,
+        evidence: opp.evidence,
+        investigationId,
+      },
+      llm,
+    );
+    const markdown = renderFichaMarkdown(ficha);
+    mkdirSync(FICHAS_DIR, { recursive: true });
+    const fichaPath = path.join(FICHAS_DIR, `ficha-${opp.id}.md`);
+    writeFileSync(fichaPath, markdown, 'utf8');
+    console.log(JSON.stringify({
+      ok: true,
+      opportunityId: opp.id,
+      fichaId: ficha.id,
+      fichaPath,
+      functions: ficha.mvp_functions.length,
+      screens: ficha.screens.length,
+      truthLevel: ficha.truth_level,
+    }, null, 2));
+  } finally {
+    db.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HYDRATORS — turn raw DB rows back into the typed model objects.
+// Inlined here (instead of exporting parseOpportunityRow from
+// repositories.ts) so the CLI's regenerate path doesn't grow a public
+// surface in the repository layer just for this one use case.
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function hydrateOpportunity(r: any): Opportunity {
+  return {
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    problem: r.problem,
+    problemRef: r.problem_ref ?? undefined,
+    targetSegment: r.target_segment,
+    geography: r.geography,
+    evidence: r.evidence_json ? JSON.parse(r.evidence_json) : [],
+    trendRef: r.trend_ref ?? undefined,
+    demand: r.demand,
+    growth: r.growth,
+    problemSeverity: r.problem_severity,
+    monetization: r.monetization,
+    timing: r.timing,
+    marketFit: r.market_fit,
+    competition: r.competition,
+    uncertainty: r.uncertainty,
+    score: r.score,
+    scoreBreakdown: r.score_breakdown_json ? JSON.parse(r.score_breakdown_json) : {},
+    confidence: r.confidence,
+    suggestedNextAgent: r.suggested_next_agent || 'AGENTE-LEADS',
+    createdAt: r.created_at,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function hydrateTrend(r: any): Trend {
+  return {
+    id: r.id,
+    topic: r.topic,
+    description: r.description,
+    state: r.state,
+    direction: 'flat',
+    confidence: r.confidence,
+    sourcesCount: r.sources_count,
+    signalsCount: r.signals_count,
+    evidence: r.evidence_json ? JSON.parse(r.evidence_json) : [],
+    signals: r.signals_json ? JSON.parse(r.signals_json) : [],
+    firstSeen: r.first_seen,
+    lastSeen: r.last_seen,
+    observationCount: r.observation_count,
+    growth: r.growth,
+    velocity: r.velocity,
+    persistence: r.persistence,
+    crossSourceConfirmation: r.cross_source_confirmation,
+    score: r.score,
+    scoreBreakdown: r.score_breakdown_json ? JSON.parse(r.score_breakdown_json) : {},
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function hydrateProblem(r: any): Problem {
+  return {
+    id: r.id,
+    description: r.description,
+    topic: r.topic,
+    severity: r.severity,
+    frequency: r.frequency,
+    confidence: r.confidence,
+    evidence: r.evidence_json ? JSON.parse(r.evidence_json) : [],
+    signals: r.signals_json ? JSON.parse(r.signals_json) : [],
+    segmentsAffected: r.segments_json ? JSON.parse(r.segments_json) : [],
+    firstSeen: r.first_seen,
+    lastSeen: r.last_seen,
+    observationCount: r.observation_count,
+    createdAt: r.created_at,
+  };
+}
+
+function extractFichaTitle(md: string): string | null {
+  const m = md.match(/^#\s+Ficha:\s*(.+?)\s*$/m);
+  return m ? m[1] : null;
+}
+
+function extractFichaSection(md: string, heading: string): string | null {
+  const idx = md.indexOf(heading);
+  if (idx < 0) return null;
+  const afterHeading = md.slice(idx + heading.length);
+  const lines = afterHeading.split('\n');
+  for (const line of lines.slice(1)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('#')) return null;
+    return trimmed;
+  }
+  return null;
 }
 
 main().catch((e) => {

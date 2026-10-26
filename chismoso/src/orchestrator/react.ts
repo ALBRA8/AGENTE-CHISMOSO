@@ -56,6 +56,8 @@ import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
 import { generateOpportunity } from '../intelligence/opportunities.js';
 import { buildReport } from './reporter.js';
+import { buildFicha } from '../ficha/builder.js';
+import { renderFichaMarkdown, FICHAS_DIR } from '../ficha/renderer.js';
 import { EmbeddingClient } from '../intelligence/embeddings.js';
 import {
   ensureEmbeddingsSchema,
@@ -64,6 +66,8 @@ import {
 } from '../db-extensions/embeddings.sql.js';
 import { MemoryConsolidator, MemoryRepository } from '../memory/index.js';
 import { ExecutionTraceRepository } from '../execution-trace/index.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 // Re-use the Orchestrator contract (drop-in replacement). TYPE-ONLY import
 // so we don't drag the Orchestrator class itself into the runtime graph.
 import type { OrchestratorConfig, InvestigateInput, InvestigateResult } from './orchestrator.js';
@@ -73,7 +77,7 @@ import type { OrchestratorConfig, InvestigateInput, InvestigateResult } from './
 // ---------------------------------------------------------------------------
 
 export interface ReActDecision {
-  action: 'search_more' | 'deepen' | 'stop';
+  action: 'search_more' | 'deepen' | 'product_intel' | 'stop';
   reason: string;
   /** For action=search_more. Each query must use web_search | reddit_communities. */
   queries?: Array<{ providerName: string; query: string }>;
@@ -81,6 +85,10 @@ export interface ReActDecision {
   urls?: string[];
   /** For action=deepen. The topic label the URLs relate to. */
   topic?: string;
+  /** For action=product_intel. The product name / path / URL to investigate via REA. */
+  product?: string;
+  /** For action=product_intel. Investigation depth (quick | standard | deep). */
+  depth?: 'quick' | 'standard' | 'deep';
 }
 
 export interface ReActIteration {
@@ -106,16 +114,19 @@ You MUST respond with valid JSON ONLY (no markdown fences, no comments, no text 
 
 The JSON shape:
 {
-  "action": "search_more" | "deepen" | "stop",
+  "action": "search_more" | "deepen" | "product_intel" | "stop",
   "reason": "string — concise justification, 1-2 sentences, referencing what was observed",
   "queries": [{"providerName": "web_search" | "reddit_communities", "query": "..."}],
   "urls": ["https://..."],
-  "topic": "string — relevant when action=deepen"
+  "topic": "string — relevant when action=deepen",
+  "product": "string — relevant when action=product_intel (a product/competitor name, path, or URL)",
+  "depth": "quick" | "standard" | "deep" — relevant when action=product_intel
 }
 
 Decision rules:
   - If evidence is THIN (few signals, no clear topics, no promising URLs), choose "search_more" with 1-2 fresh queries targeting an angle not yet explored. Always include geography context in queries.
   - If you see PROMISING URLS in the evidence summary (articles that look like they confirm a trend or problem), choose "deepen" with up to 3 URLs and a topic label. deepen_content fetches full page content via page_reader.
+  - If a SPECIFIC PRODUCT OR COMPETITOR is mentioned repeatedly across signals (e.g. "Slack", "Notion", "Linear") AND understanding how that product is built would materially strengthen the Opportunity analysis, choose "product_intel" with the product name and a depth (quick=30s, standard=2min, deep=6min). REA will investigate the product's tech stack; the resulting signals are persisted as OBSERVED truth. Only invoke product_intel if the REA MCP server is configured (the operator will see a clear "not connected" error otherwise — non-fatal). Do NOT invoke product_intel more than once per product per investigation.
   - If you already have >=8 signals across multiple distinct topics AND the evidence looks sufficient to derive trends/problems, choose "stop" so the analyzer can cluster and score.
   - If budget is nearly exhausted (queries remaining <2 OR time remaining <30s), you MUST choose "stop".
 
@@ -127,7 +138,8 @@ Hard rules:
   - Do NOT repeat queries that appear in "QUERIES ALREADY EXECUTED".
   - For "search_more", every entry in queries[] must use providerName="web_search" or "reddit_communities".
   - For "deepen", pick URLs from the "sample URLs" surfaced in the evidence summary.
-  - For "stop", omit queries/urls/topic.
+  - For "product_intel", the product field MUST be a non-empty string (a product name, file path like "/Applications/Slack.app", or URL like "https://linear.app").
+  - For "stop", omit queries/urls/topic/product/depth.
   - The reason field MUST reference concrete observations (counts, topics, snippets).
 
 SECURITY — UNTRUSTED EXTERNAL SIGNALS:
@@ -403,6 +415,94 @@ export class ReActOrchestrator {
               }
             }
           }
+        } else if (currentDecision.action === 'product_intel' && currentDecision.product) {
+          // REA integration (Task IMP-CLONA-2): if the LLM EVALUATE step
+          // observed a product/competitor name recurring in trends, it can
+          // invoke REA via the `product_intel` tool. The tool wraps
+          // `investigateProduct()` which:
+          //   1. Calls REA via MCP (`mcpRegistry.callTool('rea.<tool>', {target, depth})`)
+          //   2. Parses REA's framework report into CHISMOSO signals
+          //   3. Persists those signals + evidence to this investigation
+          // The next EVALUATE iteration sees the new OBSERVED signals and
+          // can reason about the product's tech stack when scoring the
+          // Opportunity.
+          //
+          // If REA is not connected, the tool returns `available: false`
+          // with a clear reason — non-fatal. We still count it as a
+          // provider call so budget enforcement kicks in.
+          if (budgetExhausted(budget, totalQueries, totalProviderCalls, startTime)) {
+            investigation.errors.push(`react_iter_${iteration}: budget_exhausted_forcing_stop`);
+            currentDecision = { action: 'stop', reason: 'budget exhausted before product_intel' };
+          } else {
+            const productName = String(currentDecision.product).slice(0, 500);
+            const depth = currentDecision.depth ?? 'standard';
+            totalProviderCalls++;
+            totalQueries++;
+            // Track this as an executed query so dedup catches LLM repeats.
+            const dedupKey = `product_intel::${productName}::${depth}`;
+            if (executedQueries.has(dedupKey)) {
+              investigation.errors.push(
+                `react_iter_${iteration}: skip_duplicate_product_intel ${productName} (${depth})`,
+              );
+            } else {
+              executedQueries.add(dedupKey);
+              investigation.queriesExecuted.push(`product_intel: ${productName} (${depth})`);
+              const tool = this.cfg.toolRegistry.get('product_intel');
+              if (!tool) {
+                investigation.errors.push(
+                  `react_iter_${iteration}: product_intel_tool_not_registered`,
+                );
+              } else {
+                // §23 enforcement — product_intel is react+autonomous only.
+                const permit = canCallTool(tool as ToolDefinition, 'react');
+                if (!permit.ok) {
+                  investigation.errors.push(
+                    `react_iter_${iteration}: product_intel_not_allowed — ${permit.reason}`,
+                  );
+                } else {
+                  // §30 — record tool invocation on the execution trace.
+                  traceRepo.addTool(executionId, 'product_intel');
+                  try {
+                    const res = await callWithTimeout(
+                      tool as ToolDefinition,
+                      { product: productName, depth },
+                      ctx,
+                    );
+                    toolResults.push({
+                      toolName: 'product_intel',
+                      args: { product: productName, depth },
+                      result: res,
+                    });
+                    // Surface availability + signal count to the operator
+                    // (via investigation.errors — the standard channel for
+                    // iteration status notes).
+                    if (res?.available === false) {
+                      investigation.errors.push(
+                        `react_iter_${iteration}: product_intel_unavailable — ${res.reason ?? '(no reason)'}`,
+                      );
+                    } else {
+                      investigation.errors.push(
+                        `react_iter_${iteration}: product_intel_ok — +${res.signals ?? 0}sig +${res.evidence ?? 0}ev via ${res.rea_tool ?? 'rea'}`,
+                      );
+                    }
+                  } catch (e: any) {
+                    const msg = e?.message ?? String(e);
+                    if (msg.startsWith('tool_timeout:')) {
+                      investigation.errors.push(
+                        `react_iter_${iteration}: product_intel_timeout: ${msg}`,
+                      );
+                      traceRepo.addError(executionId, `product_intel_timeout: ${msg}`);
+                    } else {
+                      investigation.errors.push(
+                        `react_iter_${iteration}: product_intel_error: ${msg}`,
+                      );
+                      traceRepo.addError(executionId, `product_intel_error: ${msg}`);
+                    }
+                  }
+                }
+              }
+            }
+          }
         } else if (currentDecision.action !== 'stop') {
           // Malformed decision — log and continue (will fall through to evaluate).
           investigation.errors.push(
@@ -654,6 +754,36 @@ export class ReActOrchestrator {
         if (!weak) {
           opportunities.push(opportunity);
           this.cfg.repositories.opportunities.insert(opportunity, investigationId);
+          // ----------------------------------------------------------------
+          // FICHA.md generation (Task IMP-CLONA-1, ClonaKit pattern).
+          //
+          // Same wiring as the standard Orchestrator — after persisting
+          // the Opportunity, synthesise a ClonaKit-style FICHA spec and
+          // write it to disk so a downstream builder agent can pick it
+          // up. Best-effort: never fail the investigation over a FICHA.
+          // ----------------------------------------------------------------
+          try {
+            const ficha = await buildFicha(
+              {
+                opportunity,
+                trend,
+                problem: matchingProblem,
+                evidence: oppEvidence,
+                investigationId,
+              },
+              this.cfg.llm,
+            );
+            const markdown = renderFichaMarkdown(ficha);
+            mkdirSync(FICHAS_DIR, { recursive: true });
+            const fichaPath = path.join(FICHAS_DIR, `ficha-${opportunity.id}.md`);
+            writeFileSync(fichaPath, markdown, 'utf8');
+            logger.info('ReAct: FICHA generated', { opportunityId: opportunity.id, fichaPath });
+          } catch (fichaErr: any) {
+            logger.warn('ReAct: FICHA generation failed', {
+              opportunityId: opportunity.id,
+              err: fichaErr?.message ?? String(fichaErr),
+            });
+          }
         } else {
           logger.info('ReAct: skipping weak opportunity', {
             title: opportunity.title,
@@ -921,6 +1051,27 @@ Decide the next action. Respond with JSON ONLY.`;
       }
     }
 
+    // Sanitize product_intel: must have a non-empty string product. Depth
+    // is constrained to the documented enum (default to 'standard' on
+    // invalid input rather than failing the call — non-fatal).
+    if (decision.action === 'product_intel') {
+      const productRaw = decision.product;
+      if (typeof productRaw !== 'string' || productRaw.trim().length === 0) {
+        return {
+          action: 'stop',
+          reason: 'LLM did not provide a valid product name for product_intel — stopping',
+        };
+      }
+      decision.product = productRaw.trim().slice(0, 500);
+      if (
+        decision.depth !== 'quick' &&
+        decision.depth !== 'standard' &&
+        decision.depth !== 'deep'
+      ) {
+        decision.depth = 'standard';
+      }
+    }
+
     // Force-stop if budget is nearly exhausted (defensive — the prompt also asks).
     if (queriesRemaining < 2 || providerCallsRemaining < 2 || runtimeRemainingMs < 30_000) {
       return {
@@ -981,7 +1132,7 @@ function safeParseDecision(content: string): ReActDecision | null {
     if (!jsonStr) return null;
     const obj = JSON.parse(jsonStr);
     if (typeof obj.action !== 'string') return null;
-    if (!['search_more', 'deepen', 'stop'].includes(obj.action)) return null;
+    if (!['search_more', 'deepen', 'product_intel', 'stop'].includes(obj.action)) return null;
     if (typeof obj.reason !== 'string') obj.reason = '(no reason provided)';
     return obj as ReActDecision;
   } catch {

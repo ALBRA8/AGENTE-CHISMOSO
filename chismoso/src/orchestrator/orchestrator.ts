@@ -60,6 +60,8 @@ import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
 import { generateOpportunity } from '../intelligence/opportunities.js';
 import { buildReport } from './reporter.js';
+import { buildFicha } from '../ficha/builder.js';
+import { renderFichaMarkdown, FICHAS_DIR } from '../ficha/renderer.js';
 import { EmbeddingClient } from '../intelligence/embeddings.js';
 import {
   ensureEmbeddingsSchema,
@@ -68,6 +70,8 @@ import {
 } from '../db-extensions/embeddings.sql.js';
 import { MemoryConsolidator, MemoryRepository } from '../memory/index.js';
 import { ExecutionTraceRepository } from '../execution-trace/index.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 export interface OrchestratorConfig {
   db: ChismosoDB;
@@ -417,6 +421,43 @@ export class Orchestrator {
         if (!weak) {
           opportunities.push(opportunity);
           this.cfg.repositories.opportunities.insert(opportunity, investigationId);
+          // ----------------------------------------------------------------
+          // FICHA.md generation (Task IMP-CLONA-1, ClonaKit pattern).
+          //
+          // After persisting the Opportunity, synthesise a ClonaKit-style
+          // FICHA spec and write it to disk under
+          // /home/z/my-project/download/chismoso/fichas/ficha-<opp_id>.md
+          //
+          // The FICHA is the INTERFACE between discovery (CHISMOSO) and
+          // construction (a future AGENTE-MVP, a human developer, or an
+          // AI like Cursor). It describes WHAT to build, not HOW.
+          //
+          // Best-effort: any failure here is logged but does NOT fail
+          // the investigation — the FICHA is a downstream artefact, not
+          // a primary deliverable.
+          // ----------------------------------------------------------------
+          try {
+            const ficha = await buildFicha(
+              {
+                opportunity,
+                trend,
+                problem: matchingProblem,
+                evidence: oppEvidence,
+                investigationId,
+              },
+              this.cfg.llm,
+            );
+            const markdown = renderFichaMarkdown(ficha);
+            mkdirSync(FICHAS_DIR, { recursive: true });
+            const fichaPath = path.join(FICHAS_DIR, `ficha-${opportunity.id}.md`);
+            writeFileSync(fichaPath, markdown, 'utf8');
+            logger.info('FICHA generated', { opportunityId: opportunity.id, fichaPath });
+          } catch (fichaErr: any) {
+            logger.warn('FICHA generation failed', {
+              opportunityId: opportunity.id,
+              err: fichaErr?.message ?? String(fichaErr),
+            });
+          }
         } else {
           logger.info('Skipping weak opportunity', { title: opportunity.title, score: opportunity.score });
         }

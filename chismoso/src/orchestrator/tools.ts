@@ -41,6 +41,7 @@ import {
   dedupEvidence,
   type NormalizeContext,
 } from '../intelligence/normalizer.js';
+import { investigateProduct } from '../intelligence/product-intel.js';
 import { logger } from '../logger.js';
 import { ErrorCode } from '../errors.js';
 
@@ -633,6 +634,154 @@ export const deepenContentTool: ToolDefinition<DeepenContentArgs, DeepenContentR
 };
 
 // ---------------------------------------------------------------------------
+// TOOL 5: product_intel — REA (ClonaKit) integration (Task IMP-CLONA-2)
+// ---------------------------------------------------------------------------
+//
+// Wraps `investigateProduct()` from src/intelligence/product-intel.ts. The
+// ReAct EVALUATE step can include action="product_intel" when a competitor
+// or product is mentioned in trends — REA investigates the product's tech
+// stack, this tool persists the resulting signals + evidence into the
+// investigation, and the next EVALUATE iteration sees the new evidence.
+//
+// §23 classification:
+//   - category: EXTERNAL (REA is an external MCP server) + READ (REA
+//     observes the binary, doesn't write)
+//   - risk: medium (REA touches external binaries/URLs but is read-only
+//     and the legal boundary is clean-room — see CLONAKIT-INTEGRATION.md)
+//   - side_effects: persist (signals + evidence go to DB)
+//   - allowedInModes: react + autonomous (NOT sync — the fixed-plan
+//     orchestrator shouldn't invoke REA; the LLM must opt in)
+//   - timeout: 300s (REA's "deep" depth is documented at 6 min; we cap
+//     at 5 min so the orchestrator's per-iteration budget isn't blown)
+//   - retry: 0 (REA doesn't have a clean transient-error class; if it
+//     fails, the operator should fix the underlying issue)
+
+export interface ProductIntelArgs {
+  product: string;
+  depth?: 'quick' | 'standard' | 'deep';
+}
+
+export interface ProductIntelResponse {
+  available: boolean;
+  reason?: string;
+  signals: number;
+  evidence: number;
+  summary?: string;
+  rea_tool?: string;
+}
+
+export const productIntelTool: ToolDefinition<ProductIntelArgs, ProductIntelResponse> = {
+  id: 'chismoso.tool.product_intel.v1',
+  name: 'product_intel',
+  description:
+    'Investigate a product using REA (if configured). Returns signals about the product\'s ' +
+    'tech stack. Requires REA MCP server.',
+  purpose: 'Deep-dive into a specific product/competitor mentioned in trends',
+  category: ['READ', 'EXTERNAL'],
+  permissions: {
+    categories: ['READ', 'EXTERNAL'],
+    allowedInModes: ['react', 'autonomous'],
+  },
+  risk: 'medium',
+  side_effects: 'persist',
+  timeout_ms: 300_000, // 5 min — REA "deep" is 6 min, we cap below that
+  retry_policy: {
+    maxRetries: 0,
+    baseDelayMs: 0,
+    backoffMultiplier: 1,
+    retryableErrors: [],
+  },
+  evidence_behavior: 'produces',
+  audit_behavior: 'logged',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      product: {
+        type: 'string',
+        description:
+          'Product name, file path, or URL. Examples: "Slack", "/Applications/Notion.app", ' +
+          '"https://linear.app".',
+      },
+      depth: {
+        type: 'string',
+        enum: ['quick', 'standard', 'deep'],
+        description: 'Investigation depth. quick=30s, standard=2min, deep=6min.',
+        default: 'standard',
+      },
+    },
+    required: ['product'],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      available: { type: 'boolean' },
+      reason: { type: 'string' },
+      signals: { type: 'integer' },
+      evidence: { type: 'integer' },
+      summary: { type: 'string' },
+      rea_tool: { type: 'string' },
+    },
+    required: ['available', 'signals', 'evidence'],
+  },
+  async execute(args, ctx) {
+    const product = String(args?.product ?? '').trim();
+    if (!product) {
+      return { available: false, reason: 'product is required', signals: 0, evidence: 0 };
+    }
+    const depth = args.depth ?? 'standard';
+    logger.info('product_intel tool invoked', { product, depth, investigationId: ctx.investigationId });
+
+    const result = await investigateProduct(product, depth);
+    if (!result.available) {
+      return {
+        available: false,
+        reason: result.reason,
+        signals: 0,
+        evidence: 0,
+        rea_tool: result.rea_tool,
+      };
+    }
+
+    // Persist signals + evidence to the active investigation.
+    let signalsStored = 0;
+    let evidenceStored = 0;
+    if (result.signals.length > 0) {
+      try {
+        signalsStored = ctx.repositories.signals.insertMany(
+          result.signals,
+          ctx.investigationId,
+        );
+      } catch (e: any) {
+        logger.warn('product_intel: signal persistence failed', {
+          err: e?.message ?? String(e),
+          investigationId: ctx.investigationId,
+        });
+      }
+    }
+    for (const ev of result.evidence) {
+      try {
+        ctx.repositories.evidence.insert(ev, ctx.investigationId);
+        evidenceStored++;
+      } catch (e: any) {
+        logger.warn('product_intel: evidence persistence failed', {
+          err: e?.message ?? String(e),
+          evId: ev.id,
+        });
+      }
+    }
+
+    return {
+      available: true,
+      signals: signalsStored,
+      evidence: evidenceStored,
+      summary: result.raw_summary?.slice(0, 1000),
+      rea_tool: result.rea_tool,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // §10 PROVIDER QUALITY TRACKER — lazily attached to ToolContext
 // ---------------------------------------------------------------------------
 
@@ -710,6 +859,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
   reg.register(searchCommunityTool);
   reg.register(collectTrendsTool);
   reg.register(deepenContentTool);
+  reg.register(productIntelTool);
   return reg;
 }
 

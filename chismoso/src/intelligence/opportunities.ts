@@ -18,6 +18,7 @@
 import type { Evidence, Opportunity, Problem, Signal, Trend } from '../models.js';
 import { generateId, nowISO } from '../models.js';
 import { logger } from '../logger.js';
+import { detectTechMentions } from './capability-mapping.js';
 
 export interface OpportunityInput {
   trend?: Trend;
@@ -70,9 +71,19 @@ export function generateOpportunity(input: OpportunityInput): OpportunityResult 
   const problemSeverity = problem?.severity ?? Math.round(0.3 * 100);
   const monetization = input.llmHint?.monetization ?? estimateMonetization(signals, problem);
   const timing = input.llmHint?.timing ?? estimateTiming(trend, signals);
-  const marketFit = input.llmHint?.marketFit ?? estimateMarketFit(signals);
+  let marketFit = input.llmHint?.marketFit ?? estimateMarketFit(signals);
   const competition = input.llmHint?.competition ?? estimateCompetition(signals);
   const uncertainty = computeUncertainty(trend, problem, signals);
+
+  // IMP-CLONA-3 — capability-mapping enrichment: aggregate the web equivalents
+  // mentioned across all signal snippets. Signals that name a concrete native
+  // framework (e.g. "uses CoreData", "built with SwiftUI") are actionable —
+  // we know what to build on the web. That bumps marketFit slightly because
+  // the opportunity is concrete rather than abstract.
+  const techRecommendations = computeTechRecommendations(signals);
+  if (techRecommendations.length > 0) {
+    marketFit = clamp100(marketFit + 5);
+  }
 
   const score100 = computeScore({
     demand,
@@ -126,6 +137,7 @@ export function generateOpportunity(input: OpportunityInput): OpportunityResult 
     confidence,
     suggestedNextAgent,
     createdAt: nowISO(),
+    tech_recommendations: techRecommendations,
   };
 
   const weak = score100 < 35 || confidence < 0.3;
@@ -136,6 +148,7 @@ export function generateOpportunity(input: OpportunityInput): OpportunityResult 
     confidence,
     weak,
     evidenceCount: evidence.length,
+    techRecommendations: techRecommendations.length,
   });
 
   return { opportunity, weak };
@@ -207,6 +220,37 @@ function computeUncertainty(trend: Trend | undefined, problem: Problem | undefin
   if (signals.length < 5) u += 15;
   if (signals.length > 20) u -= 10;
   return clamp100(u);
+}
+
+/**
+ * IMP-CLONA-3 — Capability-mapping enrichment.
+ *
+ * Aggregates the web equivalents of every native framework mentioned across
+ * the signal snippets, returns the unique set (capped at 5). Strings like
+ * "IndexedDB o localStorage" are split on " o " so the consumer gets discrete
+ * recommendations instead of compound ones.
+ *
+ * Returns an empty array when no tech mentions are found — callers should
+ * treat that as "no concrete web recommendation surfaced from signals".
+ */
+function computeTechRecommendations(signals: Signal[]): string[] {
+  const allSnippets = signals.map((s) => s.rawSnippet ?? '').join(' ');
+  if (!allSnippets.trim()) return [];
+
+  const techMentions = detectTechMentions(allSnippets);
+  if (techMentions.length === 0) return [];
+
+  const unique = new Set<string>();
+  for (const t of techMentions) {
+    for (const part of t.entry.web_equivalent.split(' o ')) {
+      const trimmed = part.trim();
+      // Skip placeholder answers ("No disponible en web", "No aplica en web")
+      // — they don't help a builder pick a web technology.
+      if (/^no (disponible|aplica)/i.test(trimmed)) continue;
+      if (trimmed) unique.add(trimmed);
+    }
+  }
+  return Array.from(unique).slice(0, 5);
 }
 
 function computeScore(s: {

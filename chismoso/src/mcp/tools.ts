@@ -31,8 +31,16 @@ import type { ToolRegistry } from '../orchestrator/tools.js';
 import { Orchestrator, LLMClient, createDefaultToolRegistry } from '../orchestrator/index.js';
 import { AnomalyDetector } from '../anomaly/index.js';
 import { semanticSearch } from '../intelligence/semantic-search.js';
+import { investigateProduct } from '../intelligence/product-intel.js';
 import type { EmbeddingClient } from '../intelligence/embeddings.js';
 import { logger } from '../logger.js';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+
+// Directory where the orchestrator persists rendered FICHA markdown
+// files. Mirrors the constant in `../ficha/renderer.ts`. When this path
+// changes, update both.
+const FICHAS_DIR = '/home/z/my-project/download/chismoso/fichas';
 
 // ---------------------------------------------------------------------------
 // DEPS — injected by the MCP server (see server.ts)
@@ -509,6 +517,343 @@ const listProvidersTool: McpTool = {
 };
 
 // ---------------------------------------------------------------------------
+// TOOL 9: chismoso_product_intel  (Task IMP-CLONA-2 — REA integration)
+// ---------------------------------------------------------------------------
+
+const productIntelTool: McpTool = {
+  name: 'chismoso_product_intel',
+  description:
+    'Investigate a product/app using REA (Reverse-engineer Anything). Returns the product\'s ' +
+    'tech stack, frameworks, capabilities — WITHOUT accessing its source code. Use this when a ' +
+    'trend mentions a specific product/competitor and you want to understand how it\'s built. ' +
+    'Requires REA MCP server to be configured (see docs/CLONAKIT-INTEGRATION.md). Output is ' +
+    'OBSERVED truth level (REA observes the binary, not source).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      product: {
+        type: 'string',
+        description:
+          'Product name, file path, or URL to investigate. Examples: "Notion", ' +
+          '"/Applications/Slack.app", "https://linear.app".',
+      },
+      depth: {
+        type: 'string',
+        enum: ['quick', 'standard', 'deep'],
+        description: 'Investigation depth. quick=30s, standard=2min, deep=6min.',
+        default: 'standard',
+      },
+    },
+    required: ['product'],
+    additionalProperties: false,
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async execute(args: any, deps: ChismosoMCPServerDeps) {
+    const product = String(args?.product ?? '').trim();
+    if (!product) throw new Error('product is required');
+    const depth = ['quick', 'standard', 'deep'].includes(args?.depth)
+      ? (args.depth as 'quick' | 'standard' | 'deep')
+      : 'standard';
+
+    logger.info('MCP chismoso_product_intel start', { product, depth });
+    const result = await investigateProduct(product, depth);
+
+    if (!result.available) {
+      return {
+        product,
+        available: false,
+        reason: result.reason,
+        signals: 0,
+        evidence: 0,
+      };
+    }
+
+    // Persist the produced signals + evidence to the latest investigation
+    // (best-effort — if there's no investigation yet, we still return the
+    // raw intel to the caller without persisting).
+    let persistedSignals = 0;
+    let persistedEvidence = 0;
+    const investigationId = getLatestInvestigationId(deps.db);
+    if (investigationId) {
+      if (result.signals.length > 0) {
+        try {
+          persistedSignals = deps.repositories.signals.insertMany(
+            result.signals,
+            investigationId,
+          );
+        } catch (e: any) {
+          logger.warn('chismoso_product_intel: signal persistence failed', {
+            err: e?.message ?? String(e),
+          });
+        }
+      }
+      for (const ev of result.evidence) {
+        try {
+          deps.repositories.evidence.insert(ev, investigationId);
+          persistedEvidence++;
+        } catch (e: any) {
+          logger.warn('chismoso_product_intel: evidence persistence failed', {
+            err: e?.message ?? String(e),
+            evId: ev.id,
+          });
+        }
+      }
+    } else {
+      logger.info(
+        'chismoso_product_intel: no investigation in DB — returning intel without persisting',
+        { product, signals: result.signals.length },
+      );
+    }
+
+    return {
+      product,
+      available: true,
+      rea_tool: result.rea_tool,
+      signals: result.signals.length,
+      evidence: result.evidence.length,
+      persistedSignals,
+      persistedEvidence,
+      investigationId: investigationId ?? null,
+      frameworks: result.signals.map((s) => ({
+        name: s.keyword,
+        purpose: (s.metadata as { purpose?: string }).purpose,
+        web_equivalent: (s.metadata as { web_equivalent?: string }).web_equivalent,
+      })),
+      raw_summary: result.raw_summary?.slice(0, 1000),
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// TOOL 10: chismoso_get_ficha (Task IMP-CLONA-1)
+// ---------------------------------------------------------------------------
+
+const getFichaTool: McpTool = {
+  name: 'chismoso_get_ficha',
+  description:
+    'Get a FICHA.md structured specification for an opportunity. The FICHA follows the ClonaKit pattern: ' +
+    'it describes WHAT to build, not HOW. Suitable for handoff to a builder agent or human developer. ' +
+    'A FICHA is generated automatically at the end of every investigation (one per Opportunity). ' +
+    'Use this tool to retrieve the rendered markdown + a parsed view (title, one-liner, evidence ' +
+    'block, truth_level). Returns found:false if no FICHA has been generated for the given opportunity_id.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      opportunity_id: {
+        type: 'string',
+        description:
+          'Opportunity ID (e.g. "opp_abc123def456"). The FICHA file is looked up by this ID at ' +
+          '<FICHAS_DIR>/ficha-<opportunity_id>.md.',
+      },
+    },
+    required: ['opportunity_id'],
+    additionalProperties: false,
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async execute(args: any, _deps: ChismosoMCPServerDeps) {
+    const rawId = String(args?.opportunity_id ?? '').trim();
+    if (!rawId) throw new Error('opportunity_id is required');
+    if (!/^[\w-]+$/.test(rawId)) {
+      return { found: false, opportunity_id: rawId, error: 'Invalid opportunity_id (allowed: [A-Za-z0-9_-]+)' };
+    }
+    const safeId = path.basename(rawId);
+    const fichaPath = path.join(FICHAS_DIR, `ficha-${safeId}.md`);
+    const resolved = path.resolve(fichaPath);
+    if (!resolved.startsWith(path.resolve(FICHAS_DIR) + path.sep)) {
+      return { found: false, opportunity_id: rawId, error: 'Path traversal detected' };
+    }
+    let markdown: string;
+    let st;
+    try {
+      markdown = readFileSync(fichaPath, 'utf8');
+      st = statSync(fichaPath);
+    } catch {
+      return {
+        found: false,
+        opportunity_id: rawId,
+        fichaPath,
+        message:
+          'No FICHA has been generated for this opportunity_id yet. ' +
+          'Run `chismoso fichas regenerate <opportunity_id>` or re-run an investigation.',
+      };
+    }
+    const parsed = parseFichaMarkdown(markdown);
+    return {
+      found: true,
+      opportunity_id: safeId,
+      fichaPath,
+      markdown,
+      parsed,
+      sizeBytes: st.size,
+      generatedAt: st.mtime.toISOString(),
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// FICHA MARKDOWN PARSER — tolerant, regex-driven. Matches the format
+// produced by `renderFichaMarkdown` in chismoso/src/ficha/renderer.ts.
+// Mirrors the parser in src/app/api/fichas/[id]/route.ts — kept in sync
+// so MCP clients and REST API clients see the same shape.
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseFichaMarkdown(md: string): any {
+  try {
+    const title = matchLine(md, /^#\s+Ficha:\s*(.+?)\s*$/m);
+    const oneLiner = extractSectionBody(md, '## 1. En una frase');
+    const targetAudience = extractSectionBody(md, '## 2. Para quién y para qué');
+
+    const evidenceSection = extractRawSection(md, '## 7. Evidencia');
+    // The renderer formats the bullets as `- **Opportunity ID:** \`value\``
+    // — the bold `**` markers sit between the label and the backtick. Use
+    // `.*?` instead of `\s*` so the regex tolerates the bold markers
+    // (and any other formatting a human editor might add).
+    const opportunityId = matchBullet(evidenceSection, /Opportunity ID:.*?`([^`]+)`/);
+    const investigationId = matchBullet(evidenceSection, /Investigation ID:.*?`([^`]+)`/);
+    const trendTopic = matchBullet(evidenceSection, /Trend topic:\s*(.+)$/m);
+    // Tolerate the bold markers between the label and the number
+    // (renderer formats as `- **Signals count:** 5`).
+    const signalCountStr = matchBullet(evidenceSection, /Signals count:.*?(\d+)/);
+    const signalCount = signalCountStr ? parseInt(signalCountStr, 10) : null;
+    const topEvidenceUrls = extractUrlBullets(evidenceSection);
+
+    const truthLevel = matchHeader(md, /Veracidad:\s*(\w+)/);
+    const generatedAt = matchHeader(md, /Fecha:\s*(.+?)\s*$/m);
+
+    return {
+      title: title ?? null,
+      oneLiner: oneLiner ?? null,
+      target_audience: targetAudience ?? null,
+      evidence: {
+        opportunity_id: opportunityId ?? null,
+        investigation_id: investigationId ?? null,
+        trend_topic: trendTopic ?? null,
+        signal_count: Number.isFinite(signalCount) ? signalCount : null,
+        top_evidence_urls: topEvidenceUrls,
+      },
+      truth_level: truthLevel ?? null,
+      generated_at: generatedAt ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function matchLine(md: string, re: RegExp): string | null {
+  const m = md.match(re);
+  return m ? m[1] : null;
+}
+
+function matchHeader(md: string, re: RegExp): string | null {
+  // The header block (`# Ficha:` + `>` quoted lines) sits at the top of
+  // the document but is separated by blank lines from the body. Instead
+  // of slicing to the first `\n\n` (which would chop off the `>` lines
+  // that follow `# Ficha:`), we just search the whole markdown — these
+  // header labels are unique enough that they will not appear elsewhere.
+  const m = md.match(re);
+  return m ? m[1] : null;
+}
+
+function extractRawSection(md: string, headingPrefix: string): string {
+  const re = new RegExp(`^${escapeRegex(headingPrefix)}.*$`, 'm');
+  const m = md.match(re);
+  if (!m) return '';
+  const start = (m.index ?? 0) + m[0].length;
+  const tailMatch = md.slice(start).match(/\n## /);
+  const end = tailMatch && tailMatch.index !== undefined ? start + tailMatch.index : md.length;
+  return md.slice(start, end);
+}
+
+function extractSectionBody(md: string, heading: string): string | null {
+  const raw = extractRawSection(md, heading);
+  const lines = raw.split('\n');
+  for (const line of lines.slice(1)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('#')) return null;
+    return trimmed;
+  }
+  return null;
+}
+
+function matchBullet(section: string, re: RegExp): string | null {
+  const m = section.match(re);
+  return m ? m[1] : null;
+}
+
+function extractUrlBullets(section: string): string[] {
+  const urls: string[] = [];
+  const re = /^\s+-\s+(https?:\/\/\S+)$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(section)) !== null) {
+    urls.push(m[1]);
+  }
+  return urls;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ---------------------------------------------------------------------------
+// FICHA DISK HELPERS — shared with the `chismoso://fichas/*` resources.
+// ---------------------------------------------------------------------------
+
+interface FichaListItem {
+  id: string;
+  title: string;
+  oneLiner: string;
+  generatedAt: string;
+  sizeBytes: number;
+  fichaPath: string;
+}
+
+/**
+ * List every persisted FICHA file on disk, newest-first by mtime.
+ * Returns [] when the fichas directory does not exist yet.
+ */
+function listFichasOnDisk(): FichaListItem[] {
+  let files: string[];
+  try {
+    files = readdirSync(FICHAS_DIR);
+  } catch {
+    return [];
+  }
+  const fichaFiles = files.filter((f) => f.startsWith('ficha-') && f.endsWith('.md'));
+  const items: FichaListItem[] = [];
+  for (const f of fichaFiles) {
+    try {
+      const fichaPath = path.join(FICHAS_DIR, f);
+      const st = statSync(fichaPath);
+      const md = readFileSync(fichaPath, 'utf8');
+      const id = f.replace(/^ficha-/, '').replace(/\.md$/, '');
+      items.push({
+        id,
+        title: matchLine(md, /^#\s+Ficha:\s*(.+?)\s*$/m) ?? id,
+        oneLiner: extractSectionBody(md, '## 1. En una frase') ?? '',
+        generatedAt: st.mtime.toISOString(),
+        sizeBytes: st.size,
+        fichaPath,
+      });
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  items.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
+  return items;
+}
+
+/**
+ * Returns the newest FichaListItem (by mtime), or null when no fichas
+ * exist on disk yet.
+ */
+function getLatestFichaOnDisk(): FichaListItem | null {
+  const items = listFichasOnDisk();
+  return items[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // SUMMARISERS — trim verbose nested objects to keep tool output LLM-digestible
 // ---------------------------------------------------------------------------
 
@@ -638,6 +983,8 @@ export const CHISMOSO_MCP_TOOLS: McpTool[] = [
   listTopicsTool,
   getTopicHistoryTool,
   listProvidersTool,
+  productIntelTool,
+  getFichaTool,
 ];
 
 export function getToolByName(name: string): McpTool | undefined {
@@ -646,3 +993,11 @@ export function getToolByName(name: string): McpTool | undefined {
 
 // Re-export helpers for tests / programmatic use.
 export { getLatestInvestigationId, listInvestigations };
+// Re-export the ficha disk helpers so resources.ts can read the same
+// data without re-implementing the directory walk.
+export {
+  listFichasOnDisk,
+  getLatestFichaOnDisk,
+  parseFichaMarkdown,
+  type FichaListItem,
+};

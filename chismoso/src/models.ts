@@ -246,6 +246,17 @@ export interface Opportunity {
   confidence: number; // 0..1
   suggestedNextAgent: string;
   createdAt: string;
+  /**
+   * Web equivalents detected from signal snippets via `capability-mapping.ts`
+   * (ported from ClonaKit's `herramientas/capacidades.mjs`).
+   *
+   * Populated by `generateOpportunity()` when signals mention native frameworks
+   * (AVFoundation, CoreData, StoreKit, …). Each entry is a short string
+   * recommending how to do it on the web (e.g. "IndexedDB", "WebAuthn").
+   *
+   * The Opportunity FICHA can render these as "Cómo se hará en la web".
+   */
+  tech_recommendations?: string[];
 }
 
 // ---------------------------------------------------------------------------

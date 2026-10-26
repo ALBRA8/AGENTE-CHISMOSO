@@ -735,6 +735,42 @@ o ejecuta `chismoso mcp disconnect <name>`.
 | `@modelcontextprotocol/server-github`               | `search_repositories`, `get_file_contents`, `create_issue`  |
 | `@modelcontextprotocol/server-slack`                 | `list_channels`, `post_message`, `search_messages`          |
 | `@modelcontextprotocol/server-postgres`             | `query`, `list_tables`, `describe_table`                    |
+| `rea-agents` (ClonaKit · MIT)                       | `investigate`, `analyze` — reverse-engineering de apps Mac/Electron/Web |
+
+### REA + ClonaKit (Task IMP-CLONA-2)
+
+A partir de V1.4, CHISMOSO integra [REA](https://github.com/morluto/rea) — la
+herramienta de ClonaKit que "averigua cómo está construida una app sin ver su
+código". REA es consumido como un MCP server estándar (config en
+`data/mcp-servers.json`, **off por defecto**).
+
+Cuando el ReAct orchestrator detecta que un producto/competidor aparece
+repetidamente en trends (e.g. "Slack", "Notion"), puede emitir
+`action="product_intel"` con el nombre del producto. Esto invoca el tool
+interno `product_intel` (registrado en `src/orchestrator/tools.ts`), que:
+
+1. Llama a REA vía MCP (`mcpRegistry.callTool('rea.<tool>', {target, depth})`).
+2. Parsea el reporte de frameworks de REA.
+3. Convierte cada framework en un par `Signal` + `Evidence` con
+   `TruthLevel.OBSERVED` (REA observa el binario, no el código fuente).
+4. Persiste las señales a la investigación activa — la próxima iteración
+   EVALUATE del ReAct las ve y puede razonar sobre el stack tecnológico del
+   producto al puntuar la Opportunity.
+
+**Boundary legal (clean-room)**: CHISMOSO detecta menciones del producto;
+REA investiga el stack tecnológico vía análisis de metadatos; CHISMOSO NO
+clona el producto, NO copia código/assets, NO bypasses DRM/login. El diseño
+de REA en sí impone este boundary — REA returns metadata, no source code.
+
+Setup completo (instalación de `rea-agents`, habilitar en config, test):
+
+👉 **Ver [`docs/CLONAKIT-INTEGRATION.md`](./CLONAKIT-INTEGRATION.md)** para
+el walkthrough completo, archivos tocados, y detalles legales.
+
+Sin REA configurado, tanto el tool MCP `chismoso_product_intel` como el tool
+interno `product_intel` devuelven `available: false` con un reason claro —
+non-fatal. La investigación continúa con el pipeline estándar de detección
+de señales.
 
 ---
 
@@ -898,11 +934,19 @@ chismoso mcp list-servers
 Código fuente CHISMOSO V1.3 relevante:
 
 - `src/mcp/server.ts` — entry point del server (stdio)
-- `src/mcp/tools.ts` — los 8 tools
-- `src/mcp/resources.ts` — los 6 resources
+- `src/mcp/tools.ts` — los 9 tools (incl. `chismoso_product_intel` para REA)
+- `src/mcp/resources.ts` — los 5 resources + 2 templates (incl. `chismoso://product_intel/{product}`)
 - `src/mcp/prompts.ts` — los 3 prompts
 - `src/mcp/client.ts` — client wrapper (consumo de servers externos)
 - `src/mcp/registry.ts` — registry de servers conectados
 - `src/mcp/bridge.ts` — bridge ToolRegistry ↔ MCP tools
 - `src/mesh/mcp-config.ts` — schema + persistencia de `data/mcp-servers.json`
+- `src/intelligence/product-intel.ts` — wrapper REA → CHISMOSO signals/evidence (Task IMP-CLONA-2)
+- `src/orchestrator/tools.ts` — registro del tool interno `product_intel`
+- `src/orchestrator/react.ts` — acción `product_intel` en el ReAct loop
 - `src/cli.ts` — comando `mcp` (todos los subcomandos)
+
+Documentación relacionada:
+
+- [`docs/CLONAKIT-INTEGRATION.md`](./CLONAKIT-INTEGRATION.md) — integración con REA (ClonaKit)
+- [`docs/CLEAN-ROOM.md`](./CLEAN-ROOM.md) — boundary legal clean-room
