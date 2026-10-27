@@ -59,6 +59,15 @@ export function validateOutboundUrl(rawUrl: string): UrlValidationResult {
     return { ok: false, reason: 'Invalid URL format' };
   }
 
+  // Permitir agentes locales en el mesh (YouTube Automation / NEX-SCOPE / AGENTE-LEADS)
+  const allowLocal =
+    process.env.CHISMOSO_ALLOW_LOCAL_WEBHOOKS === 'true' ||
+    process.env.NODE_ENV === 'development' ||
+    process.env.NODE_ENV === 'test';
+  if (allowLocal && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+    return { ok: true, safeUrl: url };
+  }
+
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return { ok: false, reason: `Protocol ${url.protocol} not allowed (only http/https)` };
   }

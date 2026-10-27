@@ -45,6 +45,11 @@ export async function autoPublishOpportunities(
     try {
       mesh.publishOpportunity(opp);
       published++;
+      // Auto-broadcast a YOUTUBE-AUTOMATION y NEX-SCOPE si tiene alta relevancia
+      if ((opp.score ?? 0) >= 35) {
+        mesh.publishOpportunity(opp, 'YOUTUBE-AUTOMATION');
+        mesh.publishOpportunity(opp, 'NEX-SCOPE');
+      }
     } catch (e: any) {
       logger.error('Mesh publish failed for opportunity', {
         investigationId,

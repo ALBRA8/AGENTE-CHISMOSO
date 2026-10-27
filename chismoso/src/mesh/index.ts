@@ -64,6 +64,22 @@ export interface OpportunityEvent {
   deliveredAt?: string;
 }
 
+export function buildVideoProductionPayload(opp: Opportunity) {
+  const problemShort = (opp.problem || opp.title).slice(0, 100);
+  return {
+    title: `¿Cómo resolver ${opp.title}? (Problema: ${problemShort})`,
+    hook: `El 90% de las personas en ${opp.targetSegment || 'este mercado'} cometen este grave error con ${problemShort}. Pero hay una forma de solucionarlo.`,
+    idea_summary: opp.description || opp.problem,
+    target_rpm: Math.min(35.0, Math.max(15.0, (opp.monetization || 50) * 0.4)),
+    reference_url: opp.trendRef || '',
+    recommended_mode: 'idea' as const,
+    target_format: 'short' as const,
+    source_agent: 'AGENTE-CHISMOSO',
+    opportunity_id: opp.id,
+    generated_at: new Date().toISOString(),
+  };
+}
+
 export interface ExternalSignalEvent {
   id: string;
   sourceAgent: string;
@@ -95,7 +111,7 @@ export class AgentMesh {
   }
 
   // -------------------------------------------------------------------------
-  // OUTBOX: publish / pending / ack / deliver
+  // OUTBOX: publish / pending / ack / deliver (includes video payloads for YouTube Automation)
   // -------------------------------------------------------------------------
 
   /**
@@ -107,8 +123,8 @@ export class AgentMesh {
    * no new row is inserted (we silently return the existing id). This lets
    * `autoPublishOpportunities` be called multiple times safely.
    */
-  publishOpportunity(opportunity: Opportunity): string {
-    const agentTarget = opportunity.suggestedNextAgent || 'AGENTE-LEADS';
+  publishOpportunity(opportunity: Opportunity, targetOverride?: string): string {
+    const agentTarget = targetOverride || opportunity.suggestedNextAgent || 'AGENTE-LEADS';
     const existing = this.db
       .prepare('SELECT id FROM mesh_outbox WHERE opportunity_id = ? AND agent_target = ?')
       .get(opportunity.id, agentTarget) as { id: string } | undefined;
@@ -141,6 +157,9 @@ export class AgentMesh {
         trendRef: opportunity.trendRef,
         createdAt: opportunity.createdAt,
       },
+      ...(agentTarget === 'YOUTUBE-AUTOMATION' || agentTarget === 'NEX-SCOPE'
+        ? { videoPayload: buildVideoProductionPayload(opportunity) }
+        : {}),
       publishedAt: now,
     };
     this.db

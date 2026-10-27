@@ -63,6 +63,10 @@ export async function deliverWebhook(input: WebhookDeliveryInput): Promise<Webho
   let body: string;
   try {
     body = JSON.stringify(payload);
+    if (url.includes('/api/factory/ideas') && (payload as any)?.videoPayload) {
+      const vp = (payload as any).videoPayload;
+      body = JSON.stringify({ idea: `${vp.title} | ${vp.hook}` });
+    }
   } catch (e: any) {
     return { ok: false, status: 0, error: `payload_serialize_failed: ${e?.message ?? String(e)}` };
   }
