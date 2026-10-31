@@ -258,12 +258,74 @@ El loop está acotado por un `InvestigationBudget` que garantiza terminación fi
 | `RedditProvider`      | `REDDIT_COMMUNITIES`   | **OK (real)** | `z-ai-web-dev-sdk` → `web_search`   | Búsqueda en comunidades (site:reddit.com, quora.com).   |
 | `WebContentProvider`  | `WEB_CONTENT`          | **OK (real)** | `z-ai-web-dev-sdk` → `page_reader`  | Profundiza URLs concretas para extraer evidencia rica.  |
 | `GoogleTrendsProvider`| `GOOGLE_TRENDS`        | **UNAVAILABLE**| (sin credenciales configuradas)     | Registrado pero no operativo. No simula datos.          |
+| `ClonaKitProvider`    | `WEB_CONTENT`          | **OK (local)** | Mapping estático de 57 frameworks  | Provider local puro — destripa señales con stack técnico.|
 
 ### Política anti-ficticia
 
 `GoogleTrendsProvider` está **registrado** para que el resto del sistema sepa que la categoría existe, pero su `health()` retorna `UNAVAILABLE` y su `search()` retorna siempre un resultado vacío con `errorCode: PROVIDER_UNAVAILABLE`. **Nunca fabrica datos**: si no hay API, no hay output. Para activarlo en V2 basta con implementar `search()` y cambiar `capabilities().status` a `OK`; el resto del sistema no requiere cambios.
 
 Los providers reales tampoco simulan: si la SDK falla, el error se propaga con su `ErrorCode` apropiado (`PROVIDER_UNAVAILABLE`, `RATE_LIMITED`, `AUTH_REQUIRED`, `TIMEOUT`).
+
+`ClonaKitProvider` es un provider **local y puro** (sin red, sin I/O): su `health()` siempre retorna `OK` porque el mapping de 57 frameworks está cargado en memoria. Su `search()` escanea el mapping local — nunca inventa datos, solo proyecta lo que ya existe en `src/intelligence/capability-mapping.ts`.
+
+---
+
+## ClonaKit Integration (Task FRENTE-B-CHISMOSO-CLONAKIT)
+
+CHISMOSO ya incluía `src/intelligence/capability-mapping.ts` (portado de ClonaKit, 57 frameworks nativos → equivalentes web) pero solo lo usaba para enriquecer fichas y bumpear el marketFit de oportunidades. A partir de esta integración, **ClonaKit es un provider oficial** y cada señal detectada se "destripa" automáticamente con:
+
+- **Stack técnico detectado** — los frameworks mencionados en el snippet de la señal (AVFoundation, CoreData, SwiftUI, …), detectados con word-boundary matching para evitar falsos positivos.
+- **Validación cruzada** — cada framework mencionado se valida contra el mapping de 57 entradas. Los que resuelven traen `purpose`, `web_equivalent` y `category`; los que no se listan como "no validados".
+- **`web_equivalent` generado** — para cada framework conocido, cómo se hace en la web (ej. CoreData → IndexedDB o localStorage).
+- **Ficha técnica inicial** — un snippet en markdown con tabla de frameworks + equivalentes web recomendados.
+
+### Cómo se hooka en el pipeline
+
+El normalizador (`src/intelligence/normalizer.ts`) ya hacía un paso básico de `detectTechMentions` que poblaba `signal.metadata.detected_tech`. Ahora, después de ese paso, llama a `enrichSignalWithTech(signal)` del nuevo módulo `src/intelligence/tech-enricher.ts`, que:
+
+1. Llama a `clonakitProvider.extractTechMentions(signal.rawSnippet)` → `string[]` de nombres de frameworks.
+2. Si no hay menciones, retorna la señal sin cambios (misma referencia — fast path).
+3. Llama a `clonakitProvider.validateCapabilities(mentioned)` → `ValidatedCapability[]`.
+4. Llama a `clonakitProvider.buildFichaSnippet(mentioned)` → markdown.
+5. Retorna una señal enriquecida con `techStack`, `webEquivalents`, `fichaSnippet` (campos in-memory) y `metadata.clonakit_enrichment` (persistido en SQLite como JSON blob).
+
+### El tool `destripar_tecnologia`
+
+El orchestrator ahora tiene un 6º tool: `destripar_tecnologia` (`src/orchestrator/tools.ts`). Es de solo lectura (`side_effects: 'none'`, `risk: 'low'`), acepta `{ text }` o `{ url }`, y devuelve:
+
+```json
+{
+  "ok": true,
+  "analysedText": "...",
+  "techStack": [{ "framework": "AVFoundation", "exists": true, "web_equivalent": "...", "category": "audio_video" }],
+  "webEquivalents": [{ "framework": "AVFoundation", "web_equivalent": "getUserMedia() ...", "category": "audio_video" }],
+  "fichaSnippet": "### Ficha técnica inicial (ClonaKit)\n\n...",
+  "mentionedCount": 2,
+  "knownCount": 2,
+  "unknownCount": 0,
+  "durationMs": 1
+}
+```
+
+Cuando se pasa `{ url }`, el tool busca la señal más reciente en la investigación activa cuya URL coincida y analiza su `rawSnippet` — no hace fetch de red, solo lee lo ya persistido.
+
+### Cómo desactivar el enriquecimiento
+
+El enriquecimiento está **activado por defecto**. Se puede desactivar de tres maneras:
+
+1. **Por signal (en código)**: pasar `{ clonakit_enrichment: false }` en el `NormalizeContext` al llamar a `normalizeRawItem()`.
+2. **Por entorno**: setear `CHISMOSO_CLONAKIT_ENRICHMENT=false` (también `0`, `no`, `off`). Esto se lee en `src/config/index.ts` y se propaga al `ChismosoConfig.clonakit_enrichment`.
+3. **Por configuración**: construir el `ChismosoConfig` con `clonakit_enrichment: false` vía `resolveConfig({ clonakit_enrichment: false })`.
+
+Cuando está desactivado, el normalizador omite la llamada a `enrichSignalWithTech` — el paso básico de `detected_tech` sigue funcionando (es independiente), pero no se genera el `clonakit_enrichment` blob ni los campos `techStack`/`webEquivalents`/`fichaSnippet`.
+
+### Verificación
+
+```bash
+chismoso providers  # lista clonakit con status OK
+```
+
+La documentación arquitectónica detallada (diagrama ASCII, flujo de datos, ejemplo completo de señal enriquecida, y los 57 frameworks soportados) está en [`docs/CLONAKIT_INTEGRATION.md`](./docs/CLONAKIT_INTEGRATION.md).
 
 ---
 

@@ -10,6 +10,32 @@ export interface ChismosoConfig {
   logLevel: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
   defaultGeography: string;
   outputDir: string;
+  /**
+   * ClonaKit tech enrichment toggle (Task FRENTE-B-CHISMOSO-CLONAKIT).
+   *
+   * When `true` (the default), every signal normalised by
+   * `normalizeRawItem()` is passed through `enrichSignalWithTech()` which
+   * attaches:
+   *   - `metadata.clonakit_enrichment` (persisted) — validated techStack,
+   *     webEquivalents, fichaSnippet, counts.
+   *   - `techStack`, `webEquivalents`, `fichaSnippet` (in-memory) — for
+   *     tools / MCP / dashboard.
+   *
+   * Set to `false` to disable the enrichment entirely. This is useful for
+   * tests that assert the raw signal shape, or for operators who want to
+   * run CHISMOSO without the ClonaKit layer.
+   *
+   * Env var: `CHISMOSO_CLONAKIT_ENRICHMENT=false` disables it.
+   */
+  clonakit_enrichment: boolean;
+}
+
+function parseBoolEnv(v: string | undefined, fallback: boolean): boolean {
+  if (v === undefined || v === null || v === '') return fallback;
+  const s = v.trim().toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(s)) return false;
+  if (['true', '1', 'yes', 'on'].includes(s)) return true;
+  return fallback;
 }
 
 export const DEFAULT_CONFIG: ChismosoConfig = {
@@ -17,6 +43,7 @@ export const DEFAULT_CONFIG: ChismosoConfig = {
   logLevel: (process.env.CHISMOSO_LOG_LEVEL as any) ?? 'INFO',
   defaultGeography: process.env.CHISMOSO_GEOGRAPHY ?? 'global',
   outputDir: process.env.CHISMOSO_OUTPUT_DIR ?? '/home/z/my-project/download/chismoso',
+  clonakit_enrichment: parseBoolEnv(process.env.CHISMOSO_CLONAKIT_ENRICHMENT, true),
 };
 
 export function resolveConfig(overrides?: Partial<ChismosoConfig>): ChismosoConfig {

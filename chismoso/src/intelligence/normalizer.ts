@@ -12,6 +12,7 @@ import type { RawItem } from '../providers/base.js';
 import type { Evidence, Signal, SignalType, SourceType, TruthLevel } from '../models.js';
 import { generateId, nowISO, SignalType as ST, TruthLevel as TL } from '../models.js';
 import { detectTechMentions } from './capability-mapping.js';
+import { enrichSignalWithTech } from './tech-enricher.js';
 
 // ---------------------------------------------------------------------------
 // DETECCIÓN DE TIPO DE SEÑAL (heurística documentada)
@@ -146,6 +147,22 @@ export interface NormalizeContext {
    * Examples: 'web_search' | 'reddit_communities' | 'mesh_external' | 'deepen_content'.
    */
   provenance?: string;
+  /**
+   * ClonaKit tech enrichment toggle (Task FRENTE-B-CHISMOSO-CLONAKIT).
+   *
+   * When `true` or `undefined` (the default), each normalised signal is
+   * passed through `enrichSignalWithTech()` after the basic
+   * `detectTechMentions` step. The enriched signal carries:
+   *   - `metadata.clonakit_enrichment` (persisted) — full validated stack
+   *     + ficha snippet + counts, survives DB round-trips.
+   *   - `techStack`, `webEquivalents`, `fichaSnippet` (in-memory only) —
+   *     structured access for tools / MCP clients / dashboard.
+   *
+   * Set to `false` to disable the enrichment entirely (e.g. for tests
+   * that assert the raw signal shape, or for operators who set
+   * `CHISMOSO_CLONAKIT_ENRICHMENT=false` in the environment).
+   */
+  clonakit_enrichment?: boolean;
 }
 
 export interface NormalizedSignal {
@@ -236,6 +253,25 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
     }));
   }
 
+  // FRENTE-B-CHISMOSO-CLONAKIT — ClonaKit provider enrichment.
+  //
+  // After the basic detected_tech pass, run the full ClonaKit enrichment
+  // which adds: validated techStack, webEquivalents, and a fichaSnippet
+  // (markdown). The enriched payload is persisted into
+  // `signal.metadata.clonakit_enrichment` so it survives a DB round-trip.
+  //
+  // Opt-in / opt-out: default ON. Pass `clonakit_enrichment: false` in the
+  // NormalizeContext to disable (operators can also set
+  // `CHISMOSO_CLONAKIT_ENRICHMENT=false` in the environment — see
+  // config/index.ts).
+  //
+  // When disabled, or when no tech mentions are found, the enricher
+  // returns the signal unchanged (same reference) so this is a no-op.
+  let finalSignal: Signal = signal;
+  if (ctx.clonakit_enrichment !== false) {
+    finalSignal = enrichSignalWithTech(signal);
+  }
+
   const evidence: Evidence = {
     id: evidenceId,
     source: item.providerName,
@@ -255,7 +291,7 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
     metadata: { title: item.title, host: item.hostName, ...((item.rawMetadata as object) ?? {}) },
   };
 
-  return { signal, evidence };
+  return { signal: finalSignal, evidence };
 }
 
 /**

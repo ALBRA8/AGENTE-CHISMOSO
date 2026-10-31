@@ -59,11 +59,10 @@ export function validateOutboundUrl(rawUrl: string): UrlValidationResult {
     return { ok: false, reason: 'Invalid URL format' };
   }
 
-  // Permitir agentes locales en el mesh (YouTube Automation / NEX-SCOPE / AGENTE-LEADS)
-  const allowLocal =
-    process.env.CHISMOSO_ALLOW_LOCAL_WEBHOOKS === 'true' ||
-    process.env.NODE_ENV === 'development' ||
-    process.env.NODE_ENV === 'test';
+  // Permitir agentes locales en el mesh SOLO cuando el operador lo explicita.
+  // Antes permitiamos localhost en dev/test automaticamente, pero eso rompia
+  // los tests de SSRF. Ahora requiere CHISMOSO_ALLOW_LOCAL_WEBHOOKS=true.
+  const allowLocal = process.env.CHISMOSO_ALLOW_LOCAL_WEBHOOKS === 'true';
   if (allowLocal && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
     return { ok: true, safeUrl: url };
   }

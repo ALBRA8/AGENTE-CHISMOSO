@@ -7,12 +7,14 @@ export * from './web-search.js';
 export * from './reddit.js';
 export * from './web-content.js';
 export * from './google-trends.js';
+export * from './clonakit.js';
 
 import { ProviderRegistry } from './base.js';
 import { WebSearchProvider } from './web-search.js';
 import { RedditProvider } from './reddit.js';
 import { WebContentProvider } from './web-content.js';
 import { GoogleTrendsProvider } from './google-trends.js';
+import { ClonaKitProvider } from './clonakit.js';
 
 /**
  * Crea un registry con todos los providers disponibles en V1.
@@ -24,5 +26,6 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
   reg.register(new RedditProvider());
   reg.register(new WebContentProvider());
   reg.register(new GoogleTrendsProvider()); // marcado UNAVAILABLE, no simula
+  reg.register(new ClonaKitProvider()); // FRENTE-B: static tech-mapping, always OK
   return reg;
 }

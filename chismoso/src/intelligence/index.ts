@@ -8,3 +8,4 @@ export * from './cross-source.js';
 export * from './trends.js';
 export * from './problems.js';
 export * from './opportunities.js';
+export * from './tech-enricher.js';

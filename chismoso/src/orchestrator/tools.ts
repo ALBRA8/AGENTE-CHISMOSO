@@ -42,6 +42,7 @@ import {
   type NormalizeContext,
 } from '../intelligence/normalizer.js';
 import { investigateProduct } from '../intelligence/product-intel.js';
+import { clonakitProvider, type ValidatedCapability, type WebEquivalent } from '../providers/clonakit.js';
 import { logger } from '../logger.js';
 import { ErrorCode } from '../errors.js';
 
@@ -782,6 +783,284 @@ export const productIntelTool: ToolDefinition<ProductIntelArgs, ProductIntelResp
 };
 
 // ---------------------------------------------------------------------------
+// TOOL 6: destripar_tecnologia — ClonaKit tech-stack destripping
+// (Task FRENTE-B-CHISMOSO-CLONAKIT)
+// ---------------------------------------------------------------------------
+//
+// Analyses a free-text snippet (or a URL's snippet already stored as a
+// signal) and returns:
+//   - techStack        — every mentioned framework, validated against the
+//                        57-entry ClonaKit capability mapping.
+//   - webEquivalents   — web-equivalent recommendations for known frameworks.
+//   - fichaSnippet     — a markdown "ficha técnica inicial" summarising the
+//                        detected stack.
+//   - mentionedCount   — total frameworks detected (known + unknown).
+//   - knownCount       — frameworks that resolved in the mapping.
+//   - unknownCount     — frameworks mentioned but not in the mapping.
+//
+// §23 classification:
+//   - category: READ (pure local lookup, no external call)
+//   - risk: low (no network, no persistence, no side effects)
+//   - side_effects: none (the tool returns data; it does NOT persist signals
+//     or evidence — callers who want persistence should use search_web /
+//     deepen_content + the normalizer's automatic enrichment)
+//   - allowedInModes: sync, react, autonomous (safe everywhere)
+//   - timeout: 5s (the lookup is O(n) in the 57-entry table; even a 10KB
+//     snippet scans in <1ms, but we keep a generous cap for safety)
+//   - retry: 0 (no transient failures possible — it's a pure function)
+
+export interface DestriparTecnologiaArgs {
+  /** Free-text snippet to analyse. Mutually exclusive with `url`. */
+  text?: string;
+  /**
+   * URL whose stored snippet should be analysed. When provided, the tool
+   * looks up the most recent signal in the active investigation whose
+   * `url` matches and analyses its `rawSnippet`. Mutually exclusive with
+   * `text`.
+   */
+  url?: string;
+}
+
+export interface DestriparTecnologiaResponse {
+  /** Whether the call succeeded (always true unless input was invalid). */
+  ok: boolean;
+  /** Error reason when `ok === false`. */
+  reason?: string;
+  /** The text that was actually analysed (for traceability). */
+  analysedText: string;
+  /** Each mentioned framework, validated against the ClonaKit mapping. */
+  techStack: ValidatedCapability[];
+  /** Web-equivalent recommendations for the known frameworks. */
+  webEquivalents: WebEquivalent[];
+  /** Markdown "ficha técnica inicial" snippet. */
+  fichaSnippet: string;
+  /** Total frameworks mentioned. */
+  mentionedCount: number;
+  /** Frameworks that resolved in the mapping. */
+  knownCount: number;
+  /** Frameworks mentioned but not in the mapping. */
+  unknownCount: number;
+  /** Duration of the analysis in milliseconds. */
+  durationMs: number;
+}
+
+export const destriparTecnologiaTool: ToolDefinition<DestriparTecnologiaArgs, DestriparTecnologiaResponse> = {
+  id: 'chismoso.tool.destripar_tecnologia.v1',
+  name: 'destripar_tecnologia',
+  description:
+    'Analiza un texto o URL y devuelve el stack técnico detectado, las capacidades ' +
+    'validadas contra el mapping de ClonaKit (57 frameworks), los equivalentes web, ' +
+    'y una ficha técnica inicial en markdown. No persiste señales — es de solo lectura.',
+  purpose:
+    'Destripar un texto/URL para identificar el stack técnico nativo mencionado y ' +
+    'generar la ficha técnica inicial con equivalentes web (ClonaKit).',
+  category: ['READ'],
+  permissions: {
+    categories: ['READ'],
+    allowedInModes: ['sync', 'react', 'autonomous'],
+  },
+  risk: 'low',
+  side_effects: 'none',
+  timeout_ms: 5_000,
+  retry_policy: {
+    maxRetries: 0,
+    baseDelayMs: 0,
+    backoffMultiplier: 1,
+    retryableErrors: [],
+  },
+  evidence_behavior: 'none',
+  audit_behavior: 'logged',
+  provider: 'clonakit',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      text: {
+        type: 'string',
+        description:
+          'Free-text snippet to analyse for tech-stack mentions. ' +
+          'Mutually exclusive with `url`.',
+      },
+      url: {
+        type: 'string',
+        format: 'uri',
+        description:
+          'URL whose stored snippet should be analysed. The tool looks up the most ' +
+          'recent signal in the active investigation whose `url` matches and analyses ' +
+          'its `rawSnippet`. Mutually exclusive with `text`.',
+      },
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      ok: { type: 'boolean' },
+      reason: { type: 'string' },
+      analysedText: { type: 'string' },
+      techStack: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            framework: { type: 'string' },
+            exists: { type: 'boolean' },
+            purpose: { type: 'string' },
+            web_equivalent: { type: 'string' },
+            category: { type: 'string' },
+          },
+          required: ['framework', 'exists'],
+        },
+      },
+      webEquivalents: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            framework: { type: 'string' },
+            web_equivalent: { type: 'string' },
+            category: { type: 'string' },
+          },
+          required: ['framework', 'web_equivalent', 'category'],
+        },
+      },
+      fichaSnippet: { type: 'string' },
+      mentionedCount: { type: 'integer' },
+      knownCount: { type: 'integer' },
+      unknownCount: { type: 'integer' },
+      durationMs: { type: 'integer' },
+    },
+    required: ['ok', 'analysedText', 'techStack', 'webEquivalents', 'fichaSnippet', 'mentionedCount', 'knownCount', 'unknownCount', 'durationMs'],
+  },
+  async execute(args, ctx) {
+    const t0 = Date.now();
+    const text = typeof args?.text === 'string' ? args.text.trim() : '';
+    const url = typeof args?.url === 'string' ? args.url.trim() : '';
+
+    if (!text && !url) {
+      return {
+        ok: false,
+        reason: 'Either `text` or `url` must be provided.',
+        analysedText: '',
+        techStack: [],
+        webEquivalents: [],
+        fichaSnippet: '',
+        mentionedCount: 0,
+        knownCount: 0,
+        unknownCount: 0,
+        durationMs: Date.now() - t0,
+      };
+    }
+    if (text && url) {
+      return {
+        ok: false,
+        reason: 'Provide `text` OR `url`, not both.',
+        analysedText: '',
+        techStack: [],
+        webEquivalents: [],
+        fichaSnippet: '',
+        mentionedCount: 0,
+        knownCount: 0,
+        unknownCount: 0,
+        durationMs: Date.now() - t0,
+      };
+    }
+
+    let analysedText = text;
+    if (url) {
+      // Look up the most recent signal in the active investigation whose url matches.
+      // This keeps the tool read-only (no network fetch) — it only reads what's
+      // already persisted. If no signal matches, we return ok:false with a reason.
+      try {
+        const signals = ctx.repositories.signals.findByInvestigation(ctx.investigationId);
+        const match = signals.find((s) => s.url === url);
+        if (!match) {
+          return {
+            ok: false,
+            reason: `No signal with url="${url}" found in investigation "${ctx.investigationId}".`,
+            analysedText: '',
+            techStack: [],
+            webEquivalents: [],
+            fichaSnippet: '',
+            mentionedCount: 0,
+            knownCount: 0,
+            unknownCount: 0,
+            durationMs: Date.now() - t0,
+          };
+        }
+        analysedText = match.rawSnippet ?? '';
+      } catch (e: any) {
+        logger.warn('destripar_tecnologia: signal lookup failed', {
+          url,
+          investigationId: ctx.investigationId,
+          err: e?.message ?? String(e),
+        });
+        return {
+          ok: false,
+          reason: `Signal lookup failed: ${e?.message ?? String(e)}`,
+          analysedText: '',
+          techStack: [],
+          webEquivalents: [],
+          fichaSnippet: '',
+          mentionedCount: 0,
+          knownCount: 0,
+          unknownCount: 0,
+          durationMs: Date.now() - t0,
+        };
+      }
+    }
+
+    if (!analysedText.trim()) {
+      return {
+        ok: false,
+        reason: 'The analysed text is empty.',
+        analysedText: '',
+        techStack: [],
+        webEquivalents: [],
+        fichaSnippet: '',
+        mentionedCount: 0,
+        knownCount: 0,
+        unknownCount: 0,
+        durationMs: Date.now() - t0,
+      };
+    }
+
+    const mentioned = clonakitProvider.extractTechMentions(analysedText);
+    const techStack = clonakitProvider.validateCapabilities(mentioned);
+    const fichaSnippet = clonakitProvider.buildFichaSnippet(mentioned);
+    const webEquivalents = techStack
+      .filter((v) => v.exists && v.web_equivalent && v.category)
+      .map((v) => ({
+        framework: v.framework,
+        web_equivalent: v.web_equivalent!,
+        category: v.category!,
+      }));
+    const knownCount = techStack.filter((v) => v.exists).length;
+    const unknownCount = techStack.length - knownCount;
+
+    logger.info('destripar_tecnologia analysed', {
+      investigationId: ctx.investigationId,
+      textLength: analysedText.length,
+      mentionedCount: mentioned.length,
+      knownCount,
+      unknownCount,
+      durationMs: Date.now() - t0,
+    });
+
+    return {
+      ok: true,
+      analysedText,
+      techStack,
+      webEquivalents,
+      fichaSnippet,
+      mentionedCount: mentioned.length,
+      knownCount,
+      unknownCount,
+      durationMs: Date.now() - t0,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // §10 PROVIDER QUALITY TRACKER — lazily attached to ToolContext
 // ---------------------------------------------------------------------------
 
@@ -860,6 +1139,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
   reg.register(collectTrendsTool);
   reg.register(deepenContentTool);
   reg.register(productIntelTool);
+  reg.register(destriparTecnologiaTool); // FRENTE-B: ClonaKit tech-stack destripping
   return reg;
 }
 
