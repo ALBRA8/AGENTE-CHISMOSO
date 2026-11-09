@@ -25,7 +25,7 @@ import {
   DEFAULT_WATCH_PATH,
 } from './index.js';
 
-const SCHEDULER_LOG_PATH = '/home/z/my-project/chismoso/data/scheduler.log';
+const SCHEDULER_LOG_PATH = process.env.CHISMOSO_SCHEDULER_LOG_PATH ?? '/data/scheduler.log';
 
 async function main(): Promise<void> {
   const cfg = resolveConfig();
