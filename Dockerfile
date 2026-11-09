@@ -157,7 +157,7 @@ FROM node:20-alpine AS runtime
 
 # tini = PID 1 signal forwarder. curl = healthcheck client.
 # addgroup/adduser create a non-root account for the USER directive below.
-RUN apk add --no-cache tini curl \
+RUN apk add --no-cache tini curl bash sqlite \
     && addgroup -S -g 1001 nodejs \
     && adduser -S -D -H -u 1001 -G nodejs nextjs
 
