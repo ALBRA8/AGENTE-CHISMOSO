@@ -186,7 +186,8 @@ COPY --from=chismoso-runtime-deps --chown=nextjs:nodejs /app/chismoso/node_modul
 COPY --chown=nextjs:nodejs ./chismoso/package.json ./chismoso/package.json
 
 # --- ops scripts (backup, healthcheck wrapper) ---
-RUN mkdir -p /data /data/reports /opt/scripts
+RUN mkdir -p /data /data/reports /opt/scripts \
+    && chown -R nextjs:nodejs /data /opt/scripts
 COPY --chown=nextjs:nodejs ./scripts/backup-sqlite.sh /opt/scripts/backup-sqlite.sh
 COPY --chown=nextjs:nodejs ./scripts/healthcheck.sh /opt/scripts/healthcheck.sh
 RUN chmod +x /opt/scripts/*.sh
