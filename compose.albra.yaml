@@ -1,0 +1,144 @@
+# ALBRA-managed CHISMOSO profile.
+# The installer must create .env.albra with mode 0600 before starting this stack.
+# Both image references MUST be immutable OCI digests, never floating tags.
+services:
+  app:
+    image: ${CHISMOSO_IMAGE:?CHISMOSO_IMAGE must be an immutable image@sha256 digest}
+    restart: unless-stopped
+    env_file:
+      - .env.albra
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      REDIS_URL: redis://redis:6379
+      CHISMOSO_DB_PATH: /data/chismoso.db
+      CHISMOSO_OUTPUT_DIR: /data/reports
+    expose:
+      - "3000"
+    volumes:
+      - chismoso_data:/data
+      - chismoso_reports:/data/reports
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - private
+      - albra_gateway
+    healthcheck:
+      test: ["/opt/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+  scheduler:
+    image: ${CHISMOSO_IMAGE:?CHISMOSO_IMAGE must be an immutable image@sha256 digest}
+    restart: unless-stopped
+    command: ["node", "chismoso/dist/scheduler/run.js"]
+    env_file:
+      - .env.albra
+    environment:
+      NODE_ENV: production
+      CHISMOSO_DB_PATH: /data/chismoso.db
+      CHISMOSO_OUTPUT_DIR: /data/reports
+    volumes:
+      - chismoso_data:/data
+      - chismoso_reports:/data/reports
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - private
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  backup:
+    image: ${CHISMOSO_IMAGE:?CHISMOSO_IMAGE must be an immutable image@sha256 digest}
+    restart: unless-stopped
+    entrypoint: ["/sbin/tini", "--"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "[backup] starting backup loop";
+        while true; do
+          sleep 6h;
+          /opt/scripts/backup-sqlite.sh || echo "[backup] backup failed at $$(date -u +%FT%TZ)";
+        done
+    env_file:
+      - .env.albra
+    environment:
+      CHISMOSO_DB_PATH: /data/chismoso.db
+      BACKUP_DIR: /data/backups
+    volumes:
+      - chismoso_data:/data:ro
+      - chismoso_backups:/data/backups
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - private
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  redis:
+    image: ${CHISMOSO_REDIS_IMAGE:?CHISMOSO_REDIS_IMAGE must be an immutable image@sha256 digest}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+volumes:
+  chismoso_data:
+  chismoso_reports:
+  chismoso_backups:
+  redis_data:
+
+networks:
+  private:
+    driver: bridge
+    internal: true
+  albra_gateway:
+    external: true
+    name: albra-agents
