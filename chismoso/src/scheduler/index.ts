@@ -28,7 +28,7 @@ export interface WatchConfig {
   maxQueries: number;
 }
 
-export const DEFAULT_WATCH_PATH = '/home/z/my-project/chismoso/data/watch.json';
+export const DEFAULT_WATCH_PATH = process.env.CHISMOSO_WATCH_CONFIG ?? path.join(process.env.CHISMOSO_DATA_DIR ?? '/data', 'watch.json');
 
 export const DEFAULT_WATCH_CONFIG: WatchConfig = {
   topics: [
