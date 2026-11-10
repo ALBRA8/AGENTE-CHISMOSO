@@ -1,0 +1,61 @@
+{
+  "albra": "container-deployment-source/1",
+  "productId": "chismoso",
+  "displayName": "ALBRA Agente Chismoso",
+  "version": "1.5.0",
+  "description": "Agente de inteligencia de señales (dashboard Next.js + scheduler + backups + Redis). Modalidad ALBRA: red interna albra-agents, sin puertos publicados al host, secretos generados por el INSTALADOR.",
+  "repo": "https://github.com/ALBRA8/AGENTE-CHISMOSO",
+  "deployment": {
+    "kind": "docker-compose",
+    "composeFile": "compose.albra.yaml",
+    "envFile": ".env.albra",
+    "projectName": "chismoso",
+    "networkName": "albra-agents",
+    "generatedSecretKeys": [
+      "CHISMOSO_JWT_SECRET"
+    ],
+    "images": [
+      {
+        "service": "app",
+        "imageVar": "CHISMOSO_IMAGE",
+        "ref": "ghcr.io/albra8/chismoso:1.5.0"
+      },
+      {
+        "service": "scheduler",
+        "imageVar": "CHISMOSO_IMAGE",
+        "ref": "ghcr.io/albra8/chismoso:1.5.0"
+      },
+      {
+        "service": "backup",
+        "imageVar": "CHISMOSO_IMAGE",
+        "ref": "ghcr.io/albra8/chismoso:1.5.0"
+      },
+      {
+        "service": "redis",
+        "imageVar": "CHISMOSO_REDIS_IMAGE",
+        "ref": "redis:7.4"
+      }
+    ],
+    "healthTimeoutSeconds": 180
+  },
+  "operatorSuppliedEnv": {
+    "CHISMOSO_AUTH_TOKENS": "Hashes SHA-256 (coma) de los tokens de máquina. El operador los genera con `chismoso auth issue` y NO deben generarse aleatoriamente en el servidor.",
+    "CHISMOSO_MESH_SECRETS": "Secretos compartidos del mesh inter-agentes. Los fija el operador al conectar Chismoso con otros agentes.",
+    "CHISMOSO_CLONAKIT_ENRICHMENT": "Opcional. Credenciales de integración ClonaKit si se usa enriquecimiento."
+  },
+  "health": {
+    "livenessPath": "/api/livez",
+    "readinessPath": "/api/health",
+    "composeHealthcheck": "/opt/scripts/healthcheck.sh (incluido en la imagen; livez → health con SELECT 1 SQLite)"
+  },
+  "persistence": {
+    "volumes": ["chismoso_data", "chismoso_reports", "chismoso_backups", "redis_data"],
+    "uid": 1001,
+    "note": "SQLite (better-sqlite3) + reportes + backups en volúmenes dedicados por instalación. NUNCA se eliminan en stop/update/rollback; solo con UNINSTALL purgeData=true."
+  },
+  "notes": [
+    "Las imágenes deben publicarse en un registro (ghcr.io/albra8/chismoso) para que el INSTALADOR pueda fijar el digest real; sin digest no hay despliegue (fail-closed).",
+    "Sin puertos publicados al host: el acceso es por la red Docker administrada albra-agents (gateway del PANEL).",
+    "El despliegue independiente del repo (docker-compose.yml + prod) NO se modifica: son modos separados."
+  ]
+}
