@@ -397,7 +397,7 @@ export class DocumentProvider implements IProvider {
     filePath: string,
   ): Promise<{ text: string; pages: number }> {
     const officeparser = await import('officeparser');
-    const text: string = await officeparser.parseOfficeAsync(filePath);
+    const text: string = await officeparser.parseOffice(filePath);
     // officeparser emits text per slide; count by looking for slide
     // markers. Fallback to 1 when no markers found (single-slide deck
     // or parser format changed).
