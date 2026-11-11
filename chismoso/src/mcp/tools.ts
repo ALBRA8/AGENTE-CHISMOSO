@@ -28,7 +28,6 @@ import type { ChismosoDB } from '../db.js';
 import type { Repositories } from '../repositories.js';
 import type { ProviderRegistry } from '../providers/base.js';
 import type { ToolRegistry } from '../orchestrator/tools.js';
-import { Orchestrator, LLMClient, createDefaultToolRegistry } from '../orchestrator/index.js';
 import { AnomalyDetector } from '../anomaly/index.js';
 import { semanticSearch } from '../intelligence/semantic-search.js';
 import { investigateProduct } from '../intelligence/product-intel.js';
@@ -36,6 +35,12 @@ import type { EmbeddingClient } from '../intelligence/embeddings.js';
 import { logger } from '../logger.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import {
+  Orchestrator,
+  LLMClient,
+  createDefaultToolRegistry,
+  ingestDocumentTool,
+} from '../orchestrator/index.js';
 
 // Directory where the orchestrator persists rendered FICHA markdown
 // files. Mirrors the constant in `../ficha/renderer.ts`. When this path
@@ -971,8 +976,166 @@ function summariseOpportunity(o: any): OpportunitySummary {
 }
 
 // ---------------------------------------------------------------------------
-// REGISTRY EXPORT
+// TOOL 11: chismoso_ingest_document — multi-format document ingestion
+// (Task IMP-DOC-INGEST)
 // ---------------------------------------------------------------------------
+//
+// Thin wrapper over the `ingest_document` internal tool. The MCP client
+// (Claude Desktop, Cursor, Continue.dev) passes an absolute file path +
+// optional topic + geography; we delegate to the internal tool which:
+//
+//   1. Constructs a DocumentProvider
+//   2. Calls `ingestDocument()` which dispatches to the right extractor
+//      (pdf-parse / mammoth / xlsx / officeparser / tesseract.js / marked)
+//   3. Splits the extracted text into ~2 KB chunks
+//   4. Normalizes each chunk into a Signal + Evidence pair via
+//      `normalizeRawItem()`
+//   5. Persists them into the active investigation (or a fresh
+//      investigation if none was passed)
+//
+// Because documents don't have an obvious "investigation" context when
+// invoked via MCP, we create a new investigation on-the-fly when none is
+// supplied via the deps' investigationId. This keeps the MCP contract
+// simple: the client passes a file path, the server returns counts.
+
+const ingestDocumentMcpTool: McpTool = {
+  name: 'chismoso_ingest_document',
+  description:
+    'Ingest a local document (PDF, Word, Excel, PowerPoint, image with OCR, ' +
+    'text, markdown, HTML) and extract signals. Returns extracted text length, ' +
+    'signal count, evidence count, format detected. Use this when you have a ' +
+    'file path to a report, white paper, spreadsheet, or screenshot that ' +
+    'contains intelligence.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      filePath: {
+        type: 'string',
+        description:
+          'Absolute path to the document file. Supported: .pdf, .docx, .xlsx, ' +
+          '.pptx, .png, .jpg, .jpeg, .webp, .gif, .txt, .csv, .json, .xml, ' +
+          '.md, .html',
+      },
+      topic: {
+        type: 'string',
+        description:
+          'Topic to tag signals with (e.g. "restaurant automation Colombia"). ' +
+          'Defaults to the file name without extension.',
+      },
+      geography: {
+        type: 'string',
+        description: 'Geographic scope',
+        default: 'global',
+      },
+    },
+    required: ['filePath'],
+    additionalProperties: false,
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async execute(args: any, deps: ChismosoMCPServerDeps) {
+    const filePath = String(args?.filePath ?? '').trim();
+    if (!filePath) throw new Error('filePath is required');
+    const topic = args?.topic ? String(args.topic) : undefined;
+    const geography = args?.geography ? String(args.geography) : 'global';
+
+    // Create a fresh investigation for this ingest — the MCP tool is
+    // invoked outside any orchestrator context, so we need an
+    // investigation_id to attach signals/evidence to. The Orchestrator
+    // helper would do this for us, but instantiating the full pipeline
+    // is heavy (LLM planner etc.). Instead we manually insert a minimal
+    // investigation row and pass its id to the tool's ToolContext.
+    const investigationId = `ingest_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const startedAt = new Date().toISOString();
+    try {
+      deps.db
+        .prepare(
+          `INSERT INTO investigations
+             (id, query, scope, started_at, status, providers_json,
+              queries_json, signals_found, evidence_found,
+              trends_found, problems_found, opportunities_found, errors_json,
+              duration_ms, iterations, budget_json, provider_runs_json,
+              execution_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          investigationId,
+          topic ?? `ingest:${path.basename(filePath)}`,
+          geography,
+          startedAt,
+          'COMPLETED',
+          '[]',
+          '[]',
+          0,
+          0,
+          0,
+          0,
+          0,
+          '[]',
+          null,
+          0,
+          '{}',
+          '[]',
+          null,
+        );
+    } catch (e: any) {
+      // Schema mismatch / missing column — log and proceed. The
+      // investigation record is for observability only; signals can be
+      // persisted with `null` investigation_id and still be retrievable.
+      logger.warn('chismoso_ingest_document: could not pre-create investigation row', {
+        err: e?.message ?? String(e),
+      });
+    }
+
+    const ctx = {
+      investigationId,
+      geography,
+      repositories: deps.repositories,
+      providerRegistry: deps.providerRegistry,
+    };
+    const result = await ingestDocumentTool.execute(
+      { filePath, topic, geography },
+      ctx,
+    );
+
+    // Update the investigation row with final counts.
+    try {
+      deps.db
+        .prepare(
+          `UPDATE investigations
+             SET signals_found = ?, evidence_found = ?, duration_ms = ?,
+                 completed_at = ?, status = ?
+           WHERE id = ?`,
+        )
+        .run(
+          result.signalsStored,
+          result.evidenceStored,
+          result.durationMs,
+          new Date().toISOString(),
+          result.error ? 'PARTIAL' : 'COMPLETED',
+          investigationId,
+        );
+    } catch (e: any) {
+      logger.warn('chismoso_ingest_document: could not finalize investigation row', {
+        err: e?.message ?? String(e),
+      });
+    }
+
+    return {
+      investigationId,
+      fileName: result.fileName,
+      format: result.format,
+      pages: result.pages,
+      sheets: result.sheets,
+      textLength: result.textLength,
+      signalsStored: result.signalsStored,
+      evidenceStored: result.evidenceStored,
+      durationMs: result.durationMs,
+      error: result.error,
+    };
+  },
+};
+
+
 
 export const CHISMOSO_MCP_TOOLS: McpTool[] = [
   investigateTool,
@@ -985,6 +1148,7 @@ export const CHISMOSO_MCP_TOOLS: McpTool[] = [
   listProvidersTool,
   productIntelTool,
   getFichaTool,
+  ingestDocumentMcpTool,
 ];
 
 export function getToolByName(name: string): McpTool | undefined {

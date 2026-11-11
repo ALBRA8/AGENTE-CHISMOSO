@@ -590,6 +590,114 @@ chismoso mcp connect github
 
 ---
 
+## Ingestión de documentos (Task IMP-DOC-INGEST)
+
+A partir de V1.6, CHISMOSO puede ingerir documentos locales además de
+buscar en la web. Esto cierra un gap crítico: la inteligencia más valiosa
+suele vivir en PDFs (reportes de mercado, white papers), Word (press
+releases), Excel (datos de mercado), PowerPoint (investor decks) e
+imágenes (screenshots de redes sociales).
+
+### Formatos soportados
+
+| Extensión              | Formato   | Librería          | Notas                                  |
+|------------------------|-----------|-------------------|----------------------------------------|
+| `.pdf`                 | pdf       | `pdf-parse`       | PDFs basados en texto. Scanned PDFs requieren OCR previo. |
+| `.docx`                | docx      | `mammoth`         | Extrae texto plano (sin formato).      |
+| `.xlsx`, `.xls`        | xlsx      | `xlsx`            | Cada hoja se serializa como CSV con separadores `=== Sheet: <name> ===`. |
+| `.pptx`                | pptx      | `officeparser`    | Cuenta slides por marcadores `Slide N`. |
+| `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` | image | `tesseract.js` | OCR con `spa+eng`. Lento (5–30 s por imagen). |
+| `.txt`, `.csv`, `.json`, `.xml`, `.log`, `.tsv` | text | `readFile` utf8 | Texto plano. |
+| `.md`, `.markdown`     | markdown  | `marked`          | Lexer extrae texto de headings/párrafos/list items. |
+| `.html`, `.htm`        | html      | regex strip       | Igual que `WebContentProvider`: quita `<script>`/`<style>` y todos los tags. |
+
+### CLI
+
+```bash
+# Ingerir un PDF, etiquetar señales con un topic
+chismoso ingest /path/to/report.pdf --topic="restaurant automation Colombia"
+
+# Ingerir una imagen (OCR)
+chismoso ingest screenshot.png --topic="whatsapp complaints" --geography="Colombia"
+
+# Ingerir un Excel (cuenta de hojas + signals por hoja)
+chismoso ingest market-data.xlsx --topic="LATAM SaaS metrics"
+```
+
+Salida (JSON a stdout):
+
+```json
+{
+  "ok": true,
+  "investigationId": "ingest_<id>",
+  "fileName": "report.pdf",
+  "format": "pdf",
+  "pages": 12,
+  "textLength": 45821,
+  "signalsStored": 23,
+  "evidenceStored": 23,
+  "durationMs": 8341,
+  "extractedTextPath": "/home/z/my-project/download/chismoso/extracted/report.txt"
+}
+```
+
+El texto extraído se guarda en
+`/home/z/my-project/download/chismoso/extracted/<filename>.txt` para
+inspección (operador puede grep / diff para verificar la extracción).
+
+### API REST
+
+`POST /api/ingest` — `multipart/form-data` con campos `file`, `topic`,
+`geography`. Límite: 50 MB por archivo. La respuesta es el mismo JSON
+que imprime el CLI.
+
+```bash
+curl -X POST http://localhost:3000/api/ingest \
+  -F "file=@report.pdf" \
+  -F "topic=restaurant automation" \
+  -F "geography=Colombia"
+```
+
+### Web UI
+
+El dashboard (`/`) tiene un componente **DocumentUpload** con drag-and-drop.
+Arrastra un archivo, completa topic + geografía, click en "Ingerir
+documento". El componente muestra formato detectado, páginas/hojas,
+señales/evidencia persistidas, duración y la ruta al texto extraído.
+Cuando la ingestión completa, el dashboard refresca la lista de
+investigaciones automáticamente.
+
+### MCP
+
+`chismoso_ingest_document` — tool para clientes MCP (Claude Desktop,
+Cursor, Continue.dev). Recibe `filePath`, `topic`, `geography` y
+devuelve el mismo JSON que el CLI.
+
+`chismoso://documents/ingested` — resource read-only que lista todos
+los documentos ingreados (con `investigationId`, `fileName`, `format`,
+`signalsStored`, etc.).
+
+### Limitaciones
+
+1. **Cap de texto: 100 KB por archivo.** Un PDF de 200 páginas produce
+   ~1 MB de texto; se trunca a 100 KB con un marcador `[... truncated at
+   100KB ...]`. Suficiente para que el normalizer + trend engine
+   encuentren las señales más fuertes sin inflar SQLite.
+2. **OCR es lento.** Tesseract.js toma 5–30 s por imagen. El tool
+   `ingest_document` tiene timeout de 120 s.
+3. **Sin transcripción de audio/video.** V1 no soporta `.mp3`, `.mp4`,
+   `.wav`, etc. (Roadmap V2).
+4. **PDFs scanned (image-only) devuelven texto vacío.** El extractor
+   `pdf-parse` no hace OCR; para PDFs scanned, conviene pre-procesar con
+   un OCR paso a paso.
+5. **Chunks de ~2 KB.** El texto extraído se divide en chunks de
+   aproximadamente 2 KB (preferentemente en límites de párrafo) antes de
+   normalizar. Cada chunk → un Signal + un Evidence. Esto permite que
+   el trend engine trate un documento largo como múltiples observaciones
+   corroboradoras en lugar de un blob gigante.
+
+---
+
 ## Limitaciones conocidas (V1)
 
 CHISMOSO V1 es honesto sobre lo que puede y lo que no:

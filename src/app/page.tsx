@@ -40,6 +40,7 @@ import { AnomalyAlerts } from '@/components/anomaly-alerts';
 import { TopicsEvolution } from '@/components/topics-evolution';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { DashboardSummary } from '@/components/dashboard-summary';
+import { DocumentUpload } from '@/components/document-upload';
 // AGENT-3: Chat agent integration — floating sidebar + toggle button
 import { ChatAgent } from '@/components/chat-agent';
 import { ChatToggle } from '@/components/chat-toggle';
@@ -952,6 +953,9 @@ export default function Home() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Document ingestion card — Task IMP-DOC-INGEST */}
+            <DocumentUpload onIngested={refreshInvestigations} />
 
             {/* Results */}
             {result && machine && (

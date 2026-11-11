@@ -24,7 +24,13 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "better-sqlite3": "^11.3.0",
-    "z-ai-web-dev-sdk": "^0.0.18"
+    "z-ai-web-dev-sdk": "^0.0.18",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.8.0",
+    "xlsx": "^0.18.5",
+    "officeparser": "^4.1.0",
+    "tesseract.js": "^5.1.1",
+    "marked": "^14.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",

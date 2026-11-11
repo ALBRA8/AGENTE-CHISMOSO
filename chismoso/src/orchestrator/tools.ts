@@ -45,6 +45,8 @@ import { investigateProduct } from '../intelligence/product-intel.js';
 import { clonakitProvider, type ValidatedCapability, type WebEquivalent } from '../providers/clonakit.js';
 import { logger } from '../logger.js';
 import { ErrorCode } from '../errors.js';
+import { DocumentProvider } from '../providers/document.js';
+import path from 'node:path';
 
 // ---------------------------------------------------------------------------
 // §23 SPEC TYPES — permissions, risk, side-effects, retry policy
@@ -1061,8 +1063,225 @@ export const destriparTecnologiaTool: ToolDefinition<DestriparTecnologiaArgs, De
 };
 
 // ---------------------------------------------------------------------------
-// §10 PROVIDER QUALITY TRACKER — lazily attached to ToolContext
+// TOOL 7: ingest_document — multi-format document ingestion
+// (Task IMP-DOC-INGEST)
 // ---------------------------------------------------------------------------
+//
+// Wraps `DocumentProvider.ingestDocument()` to let the ReAct loop and the
+// CLI ingest a local file (PDF, Word, Excel, PowerPoint, image with OCR,
+// plain text, markdown, HTML) and persist the extracted text as Signals +
+// Evidence in the active investigation.
+//
+// §23 classification:
+//   - category: READ (the tool reads a file) + EXTERNAL (the file lives on
+//     the host filesystem, outside the orchestrator's process)
+//   - risk: low (read-only — no DB writes beyond the normal signal/evidence
+//     persistence)
+//   - side_effects: persist (signals + evidence go to DB)
+//   - allowedInModes: sync, react, autonomous — sync is included because
+//     the upload route calls this tool directly without going through the
+//     ReAct loop
+//   - timeout: 120s — OCR with tesseract.js can take 30s per image,
+//     large PDFs take 10–20s
+//   - retry: 0 — extraction failures are usually deterministic (corrupt
+//     file, unsupported format) so retrying won't help
+//
+// The tool deliberately does NOT call `provider.search()` — DocumentProvider
+// is invoked directly via `ingestDocument()` because documents are ingested,
+// not searched. The provider's `canHandle()` returns false so the PLAN step
+// won't pick it for text queries.
+
+export interface IngestDocumentArgs {
+  /** Absolute path to the file on disk. */
+  filePath: string;
+  /** Topic to tag every extracted signal with. Defaults to the file name. */
+  topic?: string;
+  /** Geographic scope. Defaults to the ToolContext's geography. */
+  geography?: string;
+}
+
+export interface IngestDocumentResponse {
+  fileName: string;
+  format: string;
+  /** PDF/PPTX slide or page count, XLSX sheet count. */
+  pages?: number;
+  sheets?: number;
+  textLength: number;
+  signalsStored: number;
+  evidenceStored: number;
+  durationMs: number;
+  /** Non-fatal extraction warning (file still produced partial text). */
+  error?: string;
+}
+
+export const ingestDocumentTool: ToolDefinition<
+  IngestDocumentArgs,
+  IngestDocumentResponse
+> = {
+  id: 'chismoso.tool.ingest_document.v1',
+  name: 'ingest_document',
+  description:
+    'Ingest a local document (PDF, Word .docx, Excel .xlsx, PowerPoint .pptx, ' +
+    'image with OCR, plain text, markdown, HTML) and extract signals from it. ' +
+    'Returns extracted text length and signal count. Persists signals to DB with ' +
+    'TruthLevel.OBSERVED.',
+  purpose: 'Extract intelligence from documents that web_search cannot reach',
+  category: ['READ', 'EXTERNAL'],
+  permissions: {
+    categories: ['READ', 'EXTERNAL'],
+    allowedInModes: ['sync', 'react', 'autonomous'],
+  },
+  risk: 'low',
+  side_effects: 'persist',
+  timeout_ms: 120_000, // 2 min — large PDFs + OCR need it
+  retry_policy: {
+    maxRetries: 0,
+    baseDelayMs: 0,
+    backoffMultiplier: 1,
+    retryableErrors: [],
+  },
+  evidence_behavior: 'produces',
+  audit_behavior: 'logged',
+  provider: 'document',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      filePath: {
+        type: 'string',
+        description:
+          'Absolute path to the document file. Supported extensions: ' +
+          '.pdf, .docx, .xlsx, .pptx, .png, .jpg, .jpeg, .webp, .gif, ' +
+          '.txt, .csv, .json, .xml, .md, .html',
+      },
+      topic: {
+        type: 'string',
+        description:
+          'Topic to tag signals with (e.g. "restaurant automation Colombia"). ' +
+          'Defaults to the file name without extension.',
+      },
+      geography: {
+        type: 'string',
+        description: 'Geographic scope (default: "global").',
+        default: 'global',
+      },
+    },
+    required: ['filePath'],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      fileName: { type: 'string' },
+      format: { type: 'string' },
+      pages: { type: 'integer' },
+      sheets: { type: 'integer' },
+      textLength: { type: 'integer' },
+      signalsStored: { type: 'integer' },
+      evidenceStored: { type: 'integer' },
+      durationMs: { type: 'integer' },
+      error: { type: 'string' },
+    },
+    required: ['fileName', 'format', 'textLength', 'signalsStored', 'evidenceStored', 'durationMs'],
+  },
+  async execute(args, ctx) {
+    const filePath = String(args?.filePath ?? '').trim();
+    if (!filePath) {
+      return {
+        fileName: '',
+        format: 'unknown',
+        textLength: 0,
+        signalsStored: 0,
+        evidenceStored: 0,
+        durationMs: 0,
+        error: 'filePath is required',
+      };
+    }
+    const topic =
+      args.topic && args.topic.trim().length > 0
+        ? args.topic.trim()
+        : path.basename(filePath, path.extname(filePath));
+    const geography = args.geography ?? ctx.geography ?? 'global';
+
+    logger.info('ingest_document tool invoked', {
+      filePath,
+      topic,
+      geography,
+      investigationId: ctx.investigationId,
+    });
+
+    // Construct a fresh DocumentProvider per call — providers are cheap
+    // (no per-instance state, no network connections) and constructing one
+    // per call keeps the tool re-entrant.
+    const doc = new DocumentProvider();
+    const { result, rawItems } = await doc.ingestDocument({
+      filePath,
+      topic,
+      geography,
+    });
+
+    // Record a ProviderRun so the investigation's observability panel
+    // shows the document ingestion alongside other provider calls.
+    const run: ProviderRun = {
+      providerName: 'document',
+      startedAt: nowISO(),
+      query: `${result.fileName} (${result.format})`,
+      resultsCount: rawItems.length,
+    };
+    run.completedAt = nowISO();
+    run.durationMs = result.durationMs;
+    run.error = result.error;
+    run.errorCode = result.error ? ErrorCode.PARSE_ERROR : undefined;
+    ctx.repositories.investigations.recordProviderRun(
+      ctx.investigationId,
+      run,
+    );
+
+    if (rawItems.length === 0) {
+      return {
+        fileName: result.fileName,
+        format: result.format,
+        pages: result.pages,
+        sheets: result.sheets,
+        textLength: result.textLength,
+        signalsStored: 0,
+        evidenceStored: 0,
+        durationMs: result.durationMs,
+        error: result.error,
+      };
+    }
+
+    // Normalize + persist — same shape as searchWebTool / deepenContentTool.
+    const normCtx: NormalizeContext = {
+      topic,
+      geography,
+      investigationId: ctx.investigationId,
+      provenance: 'document_ingest',
+    };
+    const normalized = rawItems.map((it) => normalizeRawItem(it, normCtx));
+    let signals = normalized.map((n) => n.signal);
+    let evidence = normalized.map((n) => n.evidence);
+    signals = dedupSignals(signals);
+    evidence = dedupEvidence(evidence);
+    ctx.repositories.signals.insertMany(signals, ctx.investigationId);
+    for (const e of evidence) {
+      ctx.repositories.evidence.insert(e, ctx.investigationId);
+    }
+
+    return {
+      fileName: result.fileName,
+      format: result.format,
+      pages: result.pages,
+      sheets: result.sheets,
+      textLength: result.textLength,
+      signalsStored: signals.length,
+      evidenceStored: evidence.length,
+      durationMs: result.durationMs,
+      error: result.error,
+    };
+  },
+};
+
+
 
 import type { ProviderQualityTracker } from '../providers/quality.js';
 
@@ -1140,6 +1359,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
   reg.register(deepenContentTool);
   reg.register(productIntelTool);
   reg.register(destriparTecnologiaTool); // FRENTE-B: ClonaKit tech-stack destripping
+  reg.register(ingestDocumentTool);
   return reg;
 }
 

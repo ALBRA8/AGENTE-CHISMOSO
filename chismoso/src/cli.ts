@@ -22,7 +22,7 @@ import { ChismosoDB } from './db.js';
 import { Repositories } from './repositories.js';
 import { createDefaultProviderRegistry } from './providers/index.js';
 import { ProviderQualityTracker } from './providers/quality.js';
-import { createDefaultToolRegistry, LLMClient, Orchestrator, ReActOrchestrator } from './orchestrator/index.js';
+import { createDefaultToolRegistry, LLMClient, Orchestrator, ReActOrchestrator, ingestDocumentTool } from './orchestrator/index.js';
 import { logger, setLogLevel, LogLevel } from './logger.js';
 import { resolveConfig, resolveOutputPath } from './config/index.js';
 import { generateId } from './models.js';
@@ -359,6 +359,10 @@ async function main(): Promise<void> {
     return runFeedbackCommand(args, cfg);
   }
 
+  if (cmd === 'ingest') {
+    return runIngestCommand(args, cfg);
+  }
+
   if (cmd === 'fichas') {
     return runFichasCommand(args, cfg);
   }
@@ -532,6 +536,16 @@ Fichas subcommands (Task IMP-CLONA-1 — ClonaKit pattern):
                                                   Rebuild the FICHA from the stored Opportunity
                                                   (calls the LLM if available, falls back to
                                                   deterministic synthesis)
+
+Ingest subcommands (Task IMP-DOC-INGEST — multi-format document ingestion):
+  chismoso ingest <file>                     Extract text + signals from a local document.
+  chismoso ingest <file> --topic="..."       Tag signals with a topic (default: file name).
+  chismoso ingest <file> --geography="..."   Geographic scope (default: from config).
+  chismoso ingest <file> --no-extract-dump   Skip saving extracted text to disk.
+                                            Supported: PDF, Word .docx, Excel .xlsx, PPT .pptx,
+                                            images (.png/.jpg/.jpeg/.webp/.gif — OCR via Tesseract),
+                                            plain text (.txt/.csv/.json/.xml/.log/.tsv),
+                                            markdown (.md), HTML (.html/.htm).
 
 Doctor subcommands (spec §31, Task IMP-3):
   chismoso doctor                            Run all 14 subsystem checks, print colored summary
@@ -2694,6 +2708,179 @@ async function runFichasCommand(args: string[], cfg: ReturnType<typeof resolveCo
   console.error('Available: list, show <opportunity_id>, regenerate <opportunity_id>');
   process.exit(2);
 }
+
+// ---------------------------------------------------------------------------
+// `chismoso ingest <file>` — multi-format document ingestion
+// (Task IMP-DOC-INGEST)
+//
+//   chismoso ingest <file> [--topic="..."] [--geography="..."]
+//
+// Ingests a local document (PDF / Word / Excel / PowerPoint / image with
+// OCR / text / markdown / HTML), extracts text, normalizes into Signals +
+// Evidence, persists them into a fresh investigation row, and prints a
+// JSON summary to stdout. Also dumps the raw extracted text to
+// /home/z/my-project/download/chismoso/extracted/<filename>.txt for
+// inspection.
+// ---------------------------------------------------------------------------
+
+const EXTRACTED_TEXT_DIR = '/home/z/my-project/download/chismoso/extracted';
+
+async function runIngestCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): Promise<void> {
+  const filePathArg = args[1];
+  if (!filePathArg) {
+    console.error('Usage: chismoso ingest <file> [--topic="..."] [--geography="..."]');
+    console.error('Supported formats: .pdf, .docx, .xlsx, .pptx, .png, .jpg, .jpeg, .webp, .gif, .txt, .csv, .json, .xml, .md, .html');
+    process.exit(2);
+  }
+  // Resolve to absolute path so the provider can find it regardless of CWD.
+  const filePath = path.isAbsolute(filePathArg) ? filePathArg : path.resolve(process.cwd(), filePathArg);
+  if (!existsSync(filePath)) {
+    console.error(`File not found: ${filePath}`);
+    process.exit(3);
+  }
+
+  const topicArg = argValue(args, '--topic');
+  const geographyArg = argValue(args, '--geography') ?? cfg.defaultGeography;
+  const fileName = path.basename(filePath);
+  const topic = topicArg && topicArg.length > 0
+    ? topicArg
+    : path.basename(filePath, path.extname(filePath));
+
+  const db = new ChismosoDB({ path: cfg.dbPath });
+  const repos = new Repositories(db);
+  const providerRegistry = createDefaultProviderRegistry();
+
+  // Create a minimal investigation row so the signals / evidence have a
+  // parent record. The ToolContext requires an investigationId; the
+  // ingest_document tool calls `recordProviderRun` on it.
+  const investigationId = `ingest_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date().toISOString();
+  try {
+    db.prepare(
+      `INSERT INTO investigations
+         (id, query, scope, started_at, status, providers_json,
+          queries_json, signals_found, evidence_found,
+          trends_found, problems_found, opportunities_found, errors_json,
+          duration_ms, iterations, budget_json, provider_runs_json,
+          execution_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      investigationId,
+      topic,
+      geographyArg,
+      startedAt,
+      'RUNNING',
+      '[]',
+      '[]',
+      0,
+      0,
+      0,
+      0,
+      0,
+      '[]',
+      null,
+      0,
+      '{}',
+      '[]',
+      null,
+    );
+  } catch (e: any) {
+    console.error(`[chismoso] Could not create investigation row: ${e?.message ?? e}`);
+    db.close();
+    process.exit(1);
+  }
+
+  console.error(`[chismoso] Ingesting "${fileName}" (topic: ${topic}, geography: ${geographyArg}) → investigation ${investigationId}`);
+
+  const ctx = {
+    investigationId,
+    geography: geographyArg,
+    repositories: repos,
+    providerRegistry,
+  };
+
+  let result;
+  try {
+    result = await ingestDocumentTool.execute(
+      { filePath, topic, geography: geographyArg },
+      ctx,
+    );
+  } catch (e: any) {
+    console.error(`[chismoso] FATAL during ingest: ${e?.message ?? e}`);
+    // Mark the investigation FAILED so it doesn't show up as RUNNING forever.
+    try {
+      db.prepare(
+        `UPDATE investigations SET status = 'FAILED', completed_at = ?, errors_json = ?
+         WHERE id = ?`,
+      ).run(new Date().toISOString(), JSON.stringify([String(e?.message ?? e)]), investigationId);
+    } catch { /* ignore */ }
+    db.close();
+    process.exit(1);
+  }
+
+  // Finalize the investigation row with the ingestion's outcome.
+  try {
+    db.prepare(
+      `UPDATE investigations
+         SET signals_found = ?, evidence_found = ?, duration_ms = ?,
+             completed_at = ?, status = ?
+       WHERE id = ?`,
+    ).run(
+      result.signalsStored,
+      result.evidenceStored,
+      result.durationMs,
+      new Date().toISOString(),
+      result.error ? 'PARTIAL' : 'COMPLETED',
+      investigationId,
+    );
+  } catch (e: any) {
+    console.error(`[chismoso] Could not finalize investigation row: ${e?.message ?? e}`);
+  }
+
+  // Dump the extracted text to disk for inspection (operator can grep /
+  // diff to verify the extractor worked). The text is read back from the
+  // DocumentProvider so we don't need to re-run the extractor — we just
+  // read it from the most recent signal's rawSnippet OR call the provider
+  // again. Calling again is simpler & cheaper than a signal query.
+  let savedTextPath: string | undefined;
+  try {
+    const { DocumentProvider } = await import('./providers/document.js');
+    const doc = new DocumentProvider();
+    const re = await doc.ingestDocument({ filePath, topic, geography: geographyArg });
+    if (re.result.extractedText) {
+      mkdirSync(EXTRACTED_TEXT_DIR, { recursive: true });
+      // Preserve the original filename including extension so different
+      // source formats with the same base name (sample.txt, sample.md,
+      // sample.html) don't overwrite each other's extracted text dumps.
+      const safeName = fileName.replace(/[^\w.-]/g, '_').slice(0, 180);
+      savedTextPath = path.join(EXTRACTED_TEXT_DIR, `${safeName}.txt`);
+      writeFileSync(savedTextPath, re.result.extractedText, 'utf8');
+    }
+  } catch (e: any) {
+    // Best-effort — don't fail the whole command if the dump fails.
+    console.error(`[chismoso] Could not save extracted text: ${e?.message ?? e}`);
+  }
+
+  console.log(JSON.stringify({
+    ok: !result.error,
+    investigationId,
+    fileName: result.fileName,
+    format: result.format,
+    pages: result.pages,
+    sheets: result.sheets,
+    textLength: result.textLength,
+    signalsStored: result.signalsStored,
+    evidenceStored: result.evidenceStored,
+    durationMs: result.durationMs,
+    extractedTextPath: savedTextPath,
+    error: result.error,
+  }, null, 2));
+
+  db.close();
+  process.exit(result.error ? 4 : 0);
+}
+
+
 
 function runFichasList(_args: string[], _cfg: ReturnType<typeof resolveConfig>): void {
   let files: string[];

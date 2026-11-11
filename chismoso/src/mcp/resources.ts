@@ -111,6 +111,15 @@ const STATIC_RESOURCES: McpResource[] = [
       'builder agent or human developer.',
     mimeType: 'application/json',
   },
+  {
+    uri: 'chismoso://documents/ingested',
+    name: 'List of ingested documents',
+    description:
+      'Returns metadata of all documents ingested via the ingest_document tool / ' +
+      'chismoso_ingest_document MCP tool. Each entry includes investigationId, fileName, ' +
+      'format, pages/sheets, textLength, signalsStored, evidenceStored, durationMs.',
+    mimeType: 'application/json',
+  },
 ];
 
 const RESOURCE_TEMPLATES: McpResourceTemplate[] = [
@@ -221,6 +230,9 @@ export async function readChismosoResource(
   }
   if (uri === 'chismoso://opportunities/top') {
     return readTopOpportunities(deps);
+  }
+  if (uri === 'chismoso://documents/ingested') {
+    return readIngestedDocuments(deps);
   }
   throw new Error(`Unknown CHISMOSO resource URI: ${uri}`);
 }
@@ -376,6 +388,115 @@ async function readTopOpportunities(deps: ChismosoMCPServerDeps): Promise<any> {
   return {
     count: opportunities.length,
     opportunities,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// INGESTED DOCUMENTS RESOURCE — chismoso://documents/ingested
+// (Task IMP-DOC-INGEST)
+//
+// Returns a list of investigations whose query starts with `ingest:` (the
+// marker the `chismoso_ingest_document` MCP tool uses when no topic is
+// supplied) OR whose `providers_used` array contains 'document'. Each
+// entry summarises one ingested document: investigationId, fileName,
+// format, pages/sheets, textLength, signalsStored, evidenceStored,
+// durationMs.
+//
+// The fileName / format / pages / sheets / textLength fields are NOT
+// stored as columns on the investigations table — they live in the
+// `provider_runs_json` blob (one ProviderRun entry per ingestion call,
+// with `query` formatted as `<fileName> (<format>)`). We parse that blob
+// here to surface the per-document metadata.
+// ---------------------------------------------------------------------------
+
+interface IngestedDocumentRow {
+  id: string;
+  query: string;
+  scope: string | null;
+  started_at: string;
+  completed_at: string | null;
+  status: string;
+  signals_found: number;
+  evidence_found: number;
+  duration_ms: number | null;
+  provider_runs_json: string | null;
+}
+
+interface IngestedDocumentSummary {
+  investigationId: string;
+  topic: string;
+  geography: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  signalsStored: number;
+  evidenceStored: number;
+  durationMs: number | null;
+  // Parsed from the first `document` ProviderRun's `query` field, which
+  // the tool formats as `<fileName> (<format>)`.
+  fileName: string | null;
+  format: string | null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function readIngestedDocuments(deps: ChismosoMCPServerDeps): Promise<any> {
+  // Query every investigation that has at least one 'document' provider
+  // run recorded. We pull the raw JSON then parse it in JS — SQLite's
+  // JSON operators would also work, but keeping the query simple avoids
+  // dialect-specific fragility.
+  const rows = deps.db
+    .prepare(
+      `SELECT id, query, scope, started_at, completed_at, status,
+              signals_found, evidence_found, duration_ms, provider_runs_json
+       FROM investigations
+       WHERE provider_runs_json LIKE '%document%'
+          OR query LIKE 'ingest:%'
+       ORDER BY started_at DESC
+       LIMIT 100`,
+    )
+    .all() as IngestedDocumentRow[];
+
+  const summaries: IngestedDocumentSummary[] = [];
+  for (const r of rows) {
+    let fileName: string | null = null;
+    let format: string | null = null;
+    try {
+      const runs = r.provider_runs_json ? JSON.parse(r.provider_runs_json) : [];
+      for (const run of runs) {
+        if (run?.providerName === 'document' || run?.provider_name === 'document') {
+          // The tool sets `query` = `<fileName> (<format>)`.
+          const q: string = run.query ?? run.providerName ?? '';
+          const m = q.match(/^(.*)\s+\(([^()]+)\)$/);
+          if (m) {
+            fileName = m[1];
+            format = m[2];
+          } else {
+            fileName = q;
+          }
+          break;
+        }
+      }
+    } catch {
+      /* ignore JSON parse errors — keep fileName null */
+    }
+    summaries.push({
+      investigationId: r.id,
+      topic: r.query,
+      geography: r.scope,
+      startedAt: r.started_at,
+      completedAt: r.completed_at,
+      status: r.status,
+      signalsStored: r.signals_found,
+      evidenceStored: r.evidence_found,
+      durationMs: r.duration_ms,
+      fileName,
+      format,
+    });
+  }
+
+  return {
+    count: summaries.length,
+    documents: summaries,
   };
 }
 

@@ -8,6 +8,7 @@ export * from './reddit.js';
 export * from './web-content.js';
 export * from './google-trends.js';
 export * from './clonakit.js';
+export * from './document.js';
 
 import { ProviderRegistry } from './base.js';
 import { WebSearchProvider } from './web-search.js';
@@ -15,6 +16,7 @@ import { RedditProvider } from './reddit.js';
 import { WebContentProvider } from './web-content.js';
 import { GoogleTrendsProvider } from './google-trends.js';
 import { ClonaKitProvider } from './clonakit.js';
+import { DocumentProvider } from './document.js';
 
 /**
  * Crea un registry con todos los providers disponibles en V1.
@@ -27,5 +29,6 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
   reg.register(new WebContentProvider());
   reg.register(new GoogleTrendsProvider()); // marcado UNAVAILABLE, no simula
   reg.register(new ClonaKitProvider()); // FRENTE-B: static tech-mapping, always OK
+  reg.register(new DocumentProvider()); // Task IMP-DOC-INGEST — PDF/Word/Excel/PPT/images/text
   return reg;
 }
