@@ -7,7 +7,8 @@
  * settings without restarting the server or editing .env.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { authedRoute, apiOk, apiBadRequest, apiServerError } from '@/lib/middleware';
+import { authedRoute } from '@/lib/middleware';
+import { apiOk, apiBadRequest, apiServerError } from '@/lib/api-response';
 import { chismosoDb } from '@/lib/db-chismoso';
 
 export const runtime = 'nodejs';
