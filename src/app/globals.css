@@ -79,37 +79,37 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.08 0.005 270);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.12 0.008 270);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.12 0.008 270);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.65 0.22 295);
+  --primary-foreground: oklch(0.97 0 0);
+  --secondary: oklch(0.18 0.01 270);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.15 0.008 270);
+  --muted-foreground: oklch(0.65 0 0);
+  --accent: oklch(0.65 0.22 295);
+  --accent-foreground: oklch(0.97 0 0);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.55 0.2 295);
+  --chart-1: oklch(0.55 0.24 295);
+  --chart-2: oklch(0.65 0.17 162);
+  --chart-3: oklch(0.7 0.19 70);
+  --chart-4: oklch(0.6 0.24 304);
+  --chart-5: oklch(0.62 0.25 16);
+  --sidebar: oklch(0.1 0.005 270);
+  --sidebar-foreground: oklch(0.97 0 0);
+  --sidebar-primary: oklch(0.55 0.24 295);
+  --sidebar-primary-foreground: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.18 0.01 270);
+  --sidebar-accent-foreground: oklch(0.97 0 0);
+  --sidebar-border: oklch(1 0 0 / 6%);
+  --sidebar-ring: oklch(0.55 0.2 295);
 }
 
 @layer base {
@@ -151,4 +151,82 @@
   *::-webkit-scrollbar-thumb:hover {
     background-color: var(--muted-foreground);
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PRO 2027 — glassmorphism, gradient accents, smooth animations
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Glassmorphism card */
+.glass {
+  background: color-mix(in oklch, var(--card) 70%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+}
+
+.glass-hover {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.glass-hover:hover {
+  border-color: color-mix(in oklch, var(--primary) 30%, var(--border));
+  box-shadow: 0 0 20px -5px color-mix(in oklch, var(--primary) 20%, transparent);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, oklch(0.65 0.22 295), oklch(0.7 0.2 330));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Gradient border button */
+.gradient-btn {
+  background: linear-gradient(135deg, oklch(0.55 0.22 295), oklch(0.6 0.2 330));
+  color: white;
+  border: none;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+}
+.gradient-btn:hover {
+  opacity: 0.9;
+}
+.gradient-btn:active {
+  transform: scale(0.98);
+}
+
+/* Subtle pulse animation for idle CTAs */
+@keyframes subtle-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 20%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 0%, transparent); }
+}
+.pulse-idle {
+  animation: subtle-pulse 3s ease-in-out infinite;
+}
+
+/* Fade-in on load */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in {
+  animation: fade-in 0.4s ease-out;
+}
+
+/* Smooth theme transition */
+* {
+  transition-property: background-color, border-color, color;
+  transition-duration: 0.2s;
+  transition-timing-function: ease;
+}
+
+/* Hide Next.js dev overlay elements (belt-and-suspenders with layout.tsx script) */
+nextjs-portal,
+[data-nextjs-toast],
+[data-nextjs-dev-overlay],
+[data-nextjs-dialog-overlay] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
