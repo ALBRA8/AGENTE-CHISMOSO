@@ -24,8 +24,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomFillSync } from 'node:crypto';
 
+import path from 'node:path';
+
 export const USERS_DB_PATH =
-  process.env.CHISMOSO_DB_PATH ?? '/home/z/my-project/chismoso/data/chismoso.db';
+  process.env.CHISMOSO_DB_PATH ?? path.resolve(process.cwd(), 'chismoso', 'data', 'chismoso.db');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS chismoso_users (

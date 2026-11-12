@@ -30,7 +30,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 const DB_PATH =
-  process.env.CHISMOSO_DB_PATH ?? '/home/z/my-project/chismoso/data/chismoso.db';
+  process.env.CHISMOSO_DB_PATH ?? path.resolve(process.cwd(), 'chismoso', 'data', 'chismoso.db');
 
 // Ensure parent dir exists — the mesh DB helper originally skipped this,
 // which caused /api/mesh/config to 500 when chismoso had not yet been run.

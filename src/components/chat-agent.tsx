@@ -9,31 +9,19 @@ import { ChatInput } from './chat-input';
 import { ChatQuickActions } from './chat-quick-actions';
 
 interface ChatAgentProps {
-  open: boolean;
-  onClose: () => void;
+  open?: boolean;
+  onClose?: () => void;
+  mode?: 'sidebar' | 'embedded';
 }
 
 /**
- * ChatAgent — CHISMOSO's conversational sidebar.
+ * ChatAgent — CHISMOSO's conversational agent surface.
  *
- * Renders a fixed 380px right sidebar containing:
- *   - Header with avatar + session badge + close button.
- *   - Scrollable message list (user / assistant / tool / anomaly bubbles).
- *   - Quick action chips row.
- *   - Input box with send button.
- *
- * Talks to `POST /api/chat` (SSE via fetch ReadableStream because EventSource
- * does not support POST). Recognised SSE events:
- *   - token          → append to streaming assistant bubble
- *   - tool_call      → push tool chip
- *   - tool_result    → fill in the last matching tool chip's summary
- *   - proactive_anomaly → push anomaly callout
- *   - done           → finalize streaming bubble, persist sessionId
- *   - error          → push error bubble
- *
- * The component is session-only — chat history is wiped on full page reload.
+ * Can render either as:
+ *   - 'sidebar' (default): fixed 380px drawer on the right.
+ *   - 'embedded': full-width centered card inside the main page view.
  */
-export function ChatAgent({ open, onClose }: ChatAgentProps) {
+export function ChatAgent({ open = true, onClose, mode = 'sidebar' }: ChatAgentProps) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -246,41 +234,49 @@ export function ChatAgent({ open, onClose }: ChatAgentProps) {
 
   if (!open) return null;
 
+  const isEmbedded = mode === 'embedded';
+
   return (
     <div
-      className="fixed right-0 top-14 bottom-0 w-[380px] max-w-full border-l bg-background z-40 flex flex-col shadow-xl"
-      role="dialog"
+      className={
+        isEmbedded
+          ? "w-full max-w-4xl mx-auto h-[calc(100vh-190px)] min-h-[560px] border rounded-2xl bg-card flex flex-col shadow-sm overflow-hidden"
+          : "fixed right-0 top-14 bottom-0 w-[380px] max-w-full border-l bg-background z-40 flex flex-col shadow-xl"
+      }
+      role={isEmbedded ? 'region' : 'dialog'}
       aria-label="CHISMOSO conversational agent"
       aria-live="polite"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b bg-gradient-to-r from-violet-50 to-fuchsia-50 dark:from-violet-950/30 dark:to-fuchsia-950/30">
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-white">
-            <Radar className="h-3.5 w-3.5" />
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-violet-50 to-fuchsia-50 dark:from-violet-950/30 dark:to-fuchsia-950/30">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-white shadow-sm">
+            <Radar className="h-4 w-4" />
           </div>
           <div>
-            <h3 className="text-xs font-semibold leading-none">CHISMOSO</h3>
-            <p className="text-[9px] text-muted-foreground leading-none mt-0.5">
-              Analista conversacional
+            <h3 className="text-sm font-semibold leading-none">CHISMOSO · Agente Conversacional</h3>
+            <p className="text-[10px] text-muted-foreground leading-none mt-1">
+              Inteligencia de señales, detección de anomalías y tendencias en vivo
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           {sessionId && (
-            <Badge variant="outline" className="text-[9px] py-0 px-1.5">
-              sesión activa
+            <Badge variant="outline" className="text-[10px] py-0 px-2 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+              ● sesión activa
             </Badge>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={onClose}
-            aria-label="Cerrar chat"
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
+          {!isEmbedded && onClose && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onClose}
+              aria-label="Cerrar chat"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
 

@@ -20,14 +20,21 @@
 import Database from 'better-sqlite3';
 import type { Database as DB } from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import path, { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { logger } from './logger.js';
 
 export interface DBConfig {
   path: string;
 }
 
-export const DEFAULT_DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+const __db_dirname = typeof __dirname !== 'undefined'
+  ? __dirname
+  : dirname(fileURLToPath(import.meta.url));
+
+export const DEFAULT_DB_PATH = process.env.CHISMOSO_DB_PATH
+  ? process.env.CHISMOSO_DB_PATH
+  : path.resolve(__db_dirname, '..', 'data', 'chismoso.db');
 
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS schema_meta (

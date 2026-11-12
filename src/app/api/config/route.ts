@@ -106,7 +106,7 @@ interface ConfigResponse {
 // ---------------------------------------------------------------------------
 
 const CHISMOSO_DATA_DIR = path.dirname(
-  process.env.CHISMOSO_DB_PATH ?? '/home/z/my-project/chismoso/data/chismoso.db',
+  process.env.CHISMOSO_DB_PATH ?? path.resolve(process.cwd(), 'chismoso', 'data', 'chismoso.db'),
 );
 
 const BACKUP_DIR = process.env.CHISMOSO_BACKUP_DIR ?? CHISMOSO_DATA_DIR;

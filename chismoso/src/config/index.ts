@@ -42,7 +42,7 @@ export const DEFAULT_CONFIG: ChismosoConfig = {
   dbPath: process.env.CHISMOSO_DB_PATH ?? DEFAULT_DB_PATH,
   logLevel: (process.env.CHISMOSO_LOG_LEVEL as any) ?? 'INFO',
   defaultGeography: process.env.CHISMOSO_GEOGRAPHY ?? 'global',
-  outputDir: process.env.CHISMOSO_OUTPUT_DIR ?? '/home/z/my-project/download/chismoso',
+  outputDir: process.env.CHISMOSO_OUTPUT_DIR ?? path.resolve(path.dirname(DEFAULT_DB_PATH), '..', '..', 'download', 'chismoso'),
   clonakit_enrichment: parseBoolEnv(process.env.CHISMOSO_CLONAKIT_ENRICHMENT, true),
 };
 

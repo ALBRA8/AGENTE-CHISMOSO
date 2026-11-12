@@ -29,8 +29,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
-const OUTPUT_DIR = '/home/z/my-project/download/chismoso';
+const CHISMOSO_ROOT = process.env.CHISMOSO_ROOT || path.resolve(process.cwd(), 'chismoso');
+const OUTPUT_DIR = process.env.CHISMOSO_OUTPUT_DIR || path.resolve(process.cwd(), 'download', 'chismoso');
 
 /**
  * Pre-compiled CLI is preferred (faster startup — no TS compilation per call).

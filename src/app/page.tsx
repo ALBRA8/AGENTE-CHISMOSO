@@ -29,8 +29,9 @@
 import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { CircleDot } from 'lucide-react';
-import { DashboardHeader } from '@/components/dashboard-header';
+import { DashboardHeader, type DashboardTab } from '@/components/dashboard-header';
 import { InvestigationPanel } from '@/components/investigation-panel';
+import { DashboardSummary } from '@/components/dashboard-summary';
 import { ChatToggle } from '@/components/chat-toggle';
 import { ChatAgent } from '@/components/chat-agent';
 
@@ -50,7 +51,7 @@ const DEFAULT_STATS: FooterStats = {
   investigations: 0,
   providers: 0,
   meshEnabled: false,
-  version: 'v1.8',
+  version: 'v1.9',
 };
 
 async function fetchJson<T>(url: string): Promise<T | null> {
@@ -64,10 +65,11 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// Page — Fusión unificada del Agente y el Arnés
 // ---------------------------------------------------------------------------
 
 export default function Home() {
+  const [activeTab, setActiveTab] = React.useState<DashboardTab>('agent');
   const [chatOpen, setChatOpen] = React.useState(false);
   const [stats, setStats] = React.useState<FooterStats>(DEFAULT_STATS);
   const [refreshSignal, setRefreshSignal] = React.useState(0);
@@ -99,16 +101,36 @@ export default function Home() {
   return (
     <div
       className={`min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/30 transition-[padding] duration-300 ${
-        chatOpen ? 'lg:pr-[380px]' : ''
+        chatOpen && activeTab !== 'agent' ? 'lg:pr-[380px]' : ''
       }`}
     >
-      <DashboardHeader version={stats.version} />
+      <DashboardHeader
+        version={stats.version}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      />
 
-      <main className="container mx-auto px-4 py-6 flex-1 w-full max-w-7xl">
-        <InvestigationPanel
-          onInvestigationsChanged={() => setRefreshSignal((s) => s + 1)}
-          onOpenChat={() => setChatOpen(true)}
-        />
+      <main className="container mx-auto px-4 py-6 flex-1 w-full max-w-7xl flex flex-col">
+        {activeTab === 'agent' && (
+          <div className="flex-1 w-full flex flex-col items-center">
+            <ChatAgent mode="embedded" />
+          </div>
+        )}
+
+        {activeTab === 'investigator' && (
+          <InvestigationPanel
+            onInvestigationsChanged={() => setRefreshSignal((s) => s + 1)}
+            onOpenChat={() => {
+              setActiveTab('agent');
+            }}
+          />
+        )}
+
+        {activeTab === 'summary' && (
+          <div className="space-y-6">
+            <DashboardSummary />
+          </div>
+        )}
       </main>
 
       <footer className="border-t bg-background mt-auto">
@@ -135,11 +157,13 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* Floating chat toggle + chat sidebar.
-          Rendered at the end of the wrapper so the `lg:pr-[380px]` above
-          reserves space on large screens and the chat overlays correctly. */}
-      <ChatToggle open={chatOpen} onToggle={() => setChatOpen(!chatOpen)} />
-      <ChatAgent open={chatOpen} onClose={() => setChatOpen(false)} />
+      {/* Floating chat toggle + chat sidebar (active only when outside the Agent tab) */}
+      {activeTab !== 'agent' && (
+        <>
+          <ChatToggle open={chatOpen} onToggle={() => setChatOpen(!chatOpen)} />
+          <ChatAgent mode="sidebar" open={chatOpen} onClose={() => setChatOpen(false)} />
+        </>
+      )}
     </div>
   );
 }
