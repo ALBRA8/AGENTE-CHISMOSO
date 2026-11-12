@@ -42,6 +42,20 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   value TEXT NOT NULL
 );
 
+-- Agent configuration (writable from dashboard settings panel)
+-- Key-value store for user-editable settings. Env vars are the fallback;
+-- when a key exists here, it overrides the env var.
+CREATE TABLE IF NOT EXISTS agent_config (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  category    TEXT NOT NULL,    -- llm | whatsapp | telegram | providers | mesh | scheduler | alerts | general | auth
+  description TEXT,
+  is_secret   INTEGER DEFAULT 0,
+  updated_at  TEXT NOT NULL,
+  updated_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_config_category ON agent_config(category);
+
 CREATE TABLE IF NOT EXISTS topics (
   id               TEXT PRIMARY KEY,
   canonical        TEXT NOT NULL,
