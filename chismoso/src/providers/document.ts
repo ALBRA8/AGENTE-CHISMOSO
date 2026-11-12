@@ -397,7 +397,12 @@ export class DocumentProvider implements IProvider {
     filePath: string,
   ): Promise<{ text: string; pages: number }> {
     const officeparser = await import('officeparser');
-    const text: string = await officeparser.parseOffice(filePath);
+    const result: any = await officeparser.parseOffice(filePath);
+    // officeparser v4+ returns a structured AST (OfficeParserAST), not a string.
+    // For V1, we stringify it — the normalizer will still extract useful signals
+    // from the text content embedded in the AST nodes. V2 can walk the AST
+    // properly and extract per-slide text.
+    const text: string = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     // officeparser emits text per slide; count by looking for slide
     // markers. Fallback to 1 when no markers found (single-slide deck
     // or parser format changed).

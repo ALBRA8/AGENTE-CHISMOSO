@@ -119,4 +119,36 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Respect the active theme's color-scheme so native form controls,
+     scrollbars, and the address bar in some browsers flip with the
+     `.dark` class added by next-themes. */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  /* Subtle, theme-aware scrollbar styling for the dashboard's long lists
+     (providers, anomalies, investigations, semantic results). Avoids the
+     chunky default scrollbar that eats horizontal space on dense panels. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+  }
 }

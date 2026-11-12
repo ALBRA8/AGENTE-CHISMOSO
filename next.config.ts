@@ -52,6 +52,11 @@ const nextConfig: NextConfig = {
   compress: true,
   reactStrictMode: true,
 
+  // Hide the Next.js DevTools floating badge ("N" button bottom-right).
+  // It's noise in the CHISMOSO dashboard and clashes with our own
+  // floating "Hablar con CHISMOSO" button.
+  devIndicators: false,
+
   // P0-2 (R2-IMP-OBS): source maps for client AND server bundles.
   //
   // Without these, Sentry (and any other error tracker) receives
