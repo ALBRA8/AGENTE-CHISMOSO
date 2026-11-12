@@ -15,7 +15,12 @@ Eso es todo. Node es lo único que necesitas instalado manualmente.
 ## Cómo arrancar
 
 ### Windows
-- **Doble click** sobre `start.bat`
+- **Modo silencioso (Recomendado)**: **Doble click** sobre `INICIAR-CHISMOSO.vbs`
+  - *Cero consolas negras flotando en tu pantalla.*
+  - Si es la primera vez, abrirá el instalador visible para preparar dependencias.
+  - Una vez instalado, arranca en segundo plano y abre tu navegador automáticamente.
+- **Modo consola tradicional**: **Doble click** sobre `start.bat`
+- **Crear acceso directo en el Escritorio**: Doble click en `CREAR-ACCESO-DIRECTO.bat`
 
 ### macOS
 - **Doble click** sobre `start.command` desde Finder
@@ -24,28 +29,10 @@ Eso es todo. Node es lo único que necesitas instalado manualmente.
 ### Linux
 - Doble click sobre `start.sh` (asegúrate de tener permiso de ejecución: `chmod +x start.sh`)
 
-## ¿Qué hace el lanzador automáticamente?
+## ¿Cómo detener el servidor?
 
-1. Verifica que Node.js esté instalado
-2. Instala las dependencias del dashboard (si faltan)
-3. Instala las dependencias de CHISMOSO (si faltan)
-4. Compila TypeScript → JavaScript (si falta `dist/`)
-5. Crea el directorio `data/` si no existe
-6. Inicializa la base de datos con `chismoso doctor --fix`
-7. Levanta el servidor Next.js en `http://localhost:3000`
-8. Abre el navegador automáticamente a los 5 segundos
-
-## Después de que arranque
-
-- Abre http://localhost:3000 (o se abre solo)
-- Verás el dashboard con el botón flotante **"Hablar con CHISMOSO"** abajo a la derecha
-- Click en él → se abre el chat conversacional
-- O escribe un objetivo y dale a **"Investigar en vivo"**
-
-## Detener el servidor
-
-- Cierra la ventana negra (terminal) que se abrió, o
-- Presiona `Ctrl+C` en esa ventana
+- **En Windows**: Doble click sobre `DETENER-CHISMOSO.bat` (o `DETENER-CHISMOSO.vbs`).
+- **Si usaste start.bat**: Presiona `Ctrl+C` en la ventana de terminal o ciérrala.
 
 ## ¿Problemas?
 
