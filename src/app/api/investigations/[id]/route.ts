@@ -6,7 +6,7 @@ import { apiBadRequest, apiNotFound, apiOk } from '@/lib/api-response';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const OUTPUT_DIR = '/home/z/my-project/download/chismoso';
+const OUTPUT_DIR = process.env.CHISMOSO_OUTPUT_DIR || path.resolve(process.cwd(), 'download', 'chismoso');
 
 /**
  * GET /api/investigations/[id]

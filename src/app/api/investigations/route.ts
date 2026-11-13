@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { apiOk } from '@/lib/api-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
+const CHISMOSO_ROOT = process.env.CHISMOSO_ROOT || path.resolve(process.cwd(), 'chismoso');
+const OUTPUT_DIR = process.env.CHISMOSO_OUTPUT_DIR || path.resolve(process.cwd(), 'download', 'chismoso');
 
 interface InvestigationSummary {
   id: string;
@@ -33,9 +35,7 @@ export async function GET() {
   // Each pair (report-*.md + report-*.json) corresponds to one investigation.
   // The JSON contains the full machine report which we summarize.
   const fs = await import('node:fs/promises');
-  const path = await import('node:path');
 
-  const OUTPUT_DIR = '/home/z/my-project/download/chismoso';
   let files: string[] = [];
   try {
     files = await fs.readdir(OUTPUT_DIR);

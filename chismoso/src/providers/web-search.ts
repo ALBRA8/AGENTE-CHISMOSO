@@ -8,11 +8,39 @@
  * NO simula. Si la SDK no responde, el error se propaga con ErrorCode apropiado.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import ZAI from 'z-ai-web-dev-sdk';
 import { makeCapabilities, type IProvider, type ProviderQuery, type ProviderSearchResult, type RawItem } from './base.js';
 import { ErrorCode, classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ProviderHealth, SourceType } from '../models.js';
+
+function getSearchConfig(): { serperKey?: string; tavilyKey?: string; braveKey?: string } {
+  const serperKey = process.env.SERPER_API_KEY;
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  const braveKey = process.env.BRAVE_API_KEY;
+  if (serperKey || tavilyKey || braveKey) {
+    return { serperKey, tavilyKey, braveKey };
+  }
+  try {
+    const candidates = [
+      path.resolve(process.cwd(), '.signals-settings.json'),
+      path.resolve(process.cwd(), '..', '.signals-settings.json'),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) {
+        const data = JSON.parse(fs.readFileSync(c, 'utf-8'));
+        return {
+          serperKey: data.serper_api_key,
+          tavilyKey: data.tavily_api_key,
+          braveKey: data.brave_api_key,
+        };
+      }
+    }
+  } catch {}
+  return {};
+}
 
 export class WebSearchProvider implements IProvider {
   private zaiPromise: Promise<ZAI> | null = null;
@@ -65,6 +93,70 @@ export class WebSearchProvider implements IProvider {
   async search(q: ProviderQuery): Promise<ProviderSearchResult> {
     const t0 = Date.now();
     const num = Math.min(q.num ?? 10, 20);
+
+    // 1. Try Serper (Google Search) if key configured
+    const cfg = getSearchConfig();
+    if (cfg.serperKey) {
+      try {
+        const res = await fetch('https://google.serper.dev/search', {
+          method: 'POST',
+          headers: {
+            'X-API-KEY': cfg.serperKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ q: q.query, num }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const items: RawItem[] = (data.organic || []).map((r: any) => ({
+            providerName: 'web_search',
+            sourceType: SourceType.SEARCH_WEB,
+            title: r.title ?? '',
+            snippet: r.snippet ?? '',
+            url: r.link ?? '',
+            hostName: (() => { try { return new URL(r.link).hostname; } catch { return ''; } })(),
+            date: r.date ?? '',
+            rawMetadata: { rank: r.position ?? 0 },
+          }));
+          logger.info('WebSearchProvider (Serper) returned', { query: q.query, count: items.length });
+          return { providerName: 'web_search', items, durationMs: Date.now() - t0, query: q.query };
+        }
+      } catch (err: any) {
+        logger.warn('WebSearchProvider Serper call failed, falling back', { err: err?.message });
+      }
+    }
+
+    // 2. Try Tavily if key configured
+    if (cfg.tavilyKey) {
+      try {
+        const res = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: cfg.tavilyKey, query: q.query, max_results: num }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const items: RawItem[] = (data.results || []).map((r: any, idx: number) => ({
+            providerName: 'web_search',
+            sourceType: SourceType.SEARCH_WEB,
+            title: r.title ?? '',
+            snippet: r.content ?? '',
+            url: r.url ?? '',
+            hostName: (() => { try { return new URL(r.url).hostname; } catch { return ''; } })(),
+            date: '',
+            rawMetadata: { rank: idx + 1 },
+          }));
+          logger.info('WebSearchProvider (Tavily) returned', { query: q.query, count: items.length });
+          return { providerName: 'web_search', items, durationMs: Date.now() - t0, query: q.query };
+        }
+      } catch (err: any) {
+        logger.warn('WebSearchProvider Tavily call failed, falling back', { err: err?.message });
+      }
+    }
+
+    // 3. Fallback to ZAI SDK
     try {
       const zai = await this.getZAI();
       const args: { query: string; num: number; recency_days?: number } = {
