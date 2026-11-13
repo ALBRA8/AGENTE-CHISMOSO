@@ -510,6 +510,9 @@ function SignalsSection() {
   const [tavily, setTavily] = React.useState('');
   const [serper, setSerper] = React.useState('');
   const [brave, setBrave] = React.useState('');
+  const [showTavily, setShowTavily] = React.useState(false);
+  const [showSerper, setShowSerper] = React.useState(false);
+  const [showBrave, setShowBrave] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [msg, setMsg] = React.useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -589,13 +592,23 @@ function SignalsSection() {
             <span>Tavily Search API Key</span>
             <span className="text-[10px] text-muted-foreground font-normal">Búsqueda web optimizada para agentes de IA</span>
           </label>
-          <input
-            type="password"
-            value={tavily}
-            onChange={(e) => setTavily(e.target.value)}
-            placeholder="tvly-..."
-            className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
-          />
+          <div className="flex gap-2 items-center">
+            <input
+              type={showTavily ? 'text' : 'password'}
+              value={tavily}
+              onChange={(e) => setTavily(e.target.value)}
+              placeholder="tvly-..."
+              className="flex-1 text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setShowTavily(!showTavily)}
+              className="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground transition-all flex items-center gap-1 shrink-0"
+            >
+              {showTavily ? '🙈 Ocultar' : '👁️ Ver'}
+            </button>
+          </div>
         </div>
 
         <div className="space-y-1.5">
@@ -603,13 +616,23 @@ function SignalsSection() {
             <span>Serper API Key (Google Search)</span>
             <span className="text-[10px] text-muted-foreground font-normal">Rastreo de Google Search y Google News</span>
           </label>
-          <input
-            type="password"
-            value={serper}
-            onChange={(e) => setSerper(e.target.value)}
-            placeholder="Serper API key..."
-            className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
-          />
+          <div className="flex gap-2 items-center">
+            <input
+              type={showSerper ? 'text' : 'password'}
+              value={serper}
+              onChange={(e) => setSerper(e.target.value)}
+              placeholder="Serper API key..."
+              className="flex-1 text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSerper(!showSerper)}
+              className="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground transition-all flex items-center gap-1 shrink-0"
+            >
+              {showSerper ? '🙈 Ocultar' : '👁️ Ver'}
+            </button>
+          </div>
         </div>
 
         <div className="space-y-1.5">
@@ -617,13 +640,23 @@ function SignalsSection() {
             <span>Brave Search API Key</span>
             <span className="text-[10px] text-muted-foreground font-normal">Índice web independiente sin censura</span>
           </label>
-          <input
-            type="password"
-            value={brave}
-            onChange={(e) => setBrave(e.target.value)}
-            placeholder="BSA..."
-            className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
-          />
+          <div className="flex gap-2 items-center">
+            <input
+              type={showBrave ? 'text' : 'password'}
+              value={brave}
+              onChange={(e) => setBrave(e.target.value)}
+              placeholder="BSA..."
+              className="flex-1 text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setShowBrave(!showBrave)}
+              className="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground transition-all flex items-center gap-1 shrink-0"
+            >
+              {showBrave ? '🙈 Ocultar' : '👁️ Ver'}
+            </button>
+          </div>
         </div>
 
         <button
@@ -644,6 +677,7 @@ function SignalsSection() {
 
 function TelegramSection() {
   const [token, setToken] = React.useState('');
+  const [showToken, setShowToken] = React.useState(false);
   const [tokenSet, setTokenSet] = React.useState(false);
   const [enabled, setEnabled] = React.useState(false);
   const [status, setStatus] = React.useState<'unknown' | 'connected' | 'disconnected'>('unknown');
@@ -775,13 +809,20 @@ function TelegramSection() {
           </label>
           <div className="flex gap-2">
             <input
-              type="password"
+              type={showToken ? 'text' : 'password'}
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder={tokenSet ? '••••••••••••••••••••••••••••••••••••' : '123456789:ABC...'}
               className="flex-1 text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
               autoComplete="off"
             />
+            <button
+              type="button"
+              onClick={() => setShowToken(!showToken)}
+              className="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground transition-all flex items-center gap-1 shrink-0"
+            >
+              {showToken ? '🙈 Ocultar' : '👁️ Ver'}
+            </button>
             <button
               onClick={saveToken}
               disabled={saving || !token.trim()}
