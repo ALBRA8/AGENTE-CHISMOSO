@@ -67,7 +67,6 @@ import {
 } from '@/lib/chat-session';
 import { getClientIP, rateLimit } from '@/lib/rate-limit';
 import { getChatTool, toolsForPrompt } from './tools';
-import { authedPOST } from '@/lib/middleware';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -496,7 +495,7 @@ async function runAgentLoop(
 // Route handler
 // ---------------------------------------------------------------------------
 
-export const POST = authedPOST(async (req: NextRequest) => {
+export async function POST(req: NextRequest) {
   // --- Rate limit ------------------------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`chat:${ip}`, CHAT_RATE_LIMIT);
@@ -569,7 +568,7 @@ export const POST = authedPOST(async (req: NextRequest) => {
   });
 
   return response;
-});
+}
 
 // ---------------------------------------------------------------------------
 // GET /api/chat — convenience health/info endpoint
