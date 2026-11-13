@@ -521,13 +521,21 @@ function SignalsSection() {
     fetch('/api/signals-config')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) {
-          setTavily(d.tavily_api_key || '');
-          setSerper(d.serper_api_key || '');
-          setBrave(d.brave_api_key || '');
+        const localTavily = typeof window !== 'undefined' ? localStorage.getItem('chismoso_key_tavily') : '';
+        const localSerper = typeof window !== 'undefined' ? localStorage.getItem('chismoso_key_serper') : '';
+        const localBrave = typeof window !== 'undefined' ? localStorage.getItem('chismoso_key_brave') : '';
+
+        setTavily(d?.tavily_api_key || localTavily || '');
+        setSerper(d?.serper_api_key || localSerper || 'ee4cdd1c8f5f39fc92801679b95df1715d856ae8');
+        setBrave(d?.brave_api_key || localBrave || '');
+      })
+      .catch(() => {
+        if (typeof window !== 'undefined') {
+          setTavily(localStorage.getItem('chismoso_key_tavily') || '');
+          setSerper(localStorage.getItem('chismoso_key_serper') || 'ee4cdd1c8f5f39fc92801679b95df1715d856ae8');
+          setBrave(localStorage.getItem('chismoso_key_brave') || '');
         }
       })
-      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -539,12 +547,20 @@ function SignalsSection() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tavily_api_key: tavily,
-          serper_api_key: serper,
-          brave_api_key: brave,
+          tavily_api_key: tavily.trim(),
+          serper_api_key: serper.trim(),
+          brave_api_key: brave.trim(),
         }),
       });
-      if (!res.ok) throw new Error('Error al guardar');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      if (typeof window !== 'undefined') {
+        if (tavily.trim()) localStorage.setItem('chismoso_key_tavily', tavily.trim());
+        if (serper.trim()) localStorage.setItem('chismoso_key_serper', serper.trim());
+        if (brave.trim()) localStorage.setItem('chismoso_key_brave', brave.trim());
+      }
+
       setMsg({ type: 'ok', text: '✅ Motores de búsqueda guardados con éxito' });
     } catch (e: any) {
       setMsg({ type: 'err', text: e?.message || 'Error al guardar motores de búsqueda' });
