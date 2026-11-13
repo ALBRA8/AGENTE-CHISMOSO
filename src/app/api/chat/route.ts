@@ -222,6 +222,49 @@ function buildLLMMessages(session: ChatSession): Array<{ role: 'system' | 'user'
  * event and closing the stream.
  */
 async function callLLM(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>): Promise<string> {
+  // Check provider settings first (NVIDIA NIM / Groq / OpenAI / etc.)
+  try {
+    let settings: any = null;
+    try {
+      const { readFile } = await import('fs/promises');
+      const path = await import('path');
+      const raw = await readFile(path.join(process.cwd(), '.provider-settings.json'), 'utf-8');
+      settings = JSON.parse(raw);
+    } catch {}
+
+    const apiKey = settings?.api_key || process.env.NVIDIA_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
+    const provider = settings?.provider || process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : 'nvidia');
+    const baseUrl = settings?.base_url || process.env.AI_BASE_URL || (provider === 'groq' ? 'https://api.groq.com/openai/v1' : 'https://integrate.api.nvidia.com/v1');
+    const model = settings?.model || process.env.AI_MODEL || (provider === 'groq' ? 'openai/gpt-oss-120b' : 'z-ai/glm-5.3-flash');
+    const temperature = settings?.temperature ?? 0.5;
+    const maxTokens = settings?.max_tokens ?? 1024;
+
+    if (apiKey && provider !== 'mock') {
+      const endpoint = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        return (data.choices?.[0]?.message?.content ?? '').toString();
+      }
+    }
+  } catch {
+    // If custom provider fails, fallback to ZAI
+  }
+
   const zai = await getZAI();
   const completion: any = await zai.chat.completions.create({
     messages,
