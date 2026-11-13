@@ -436,61 +436,43 @@ function ProviderSection() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-          <div className="space-y-1.5">
-            <div className="flex justify-between items-center text-xs">
-              <span className="font-semibold text-foreground">Temperatura: {temperature.toFixed(2)}</span>
+        {/* Parámetros avanzados opcionales en acordeón colapsable */}
+        <details className="border-t border-border/40 pt-3 group">
+          <summary className="text-xs text-muted-foreground hover:text-foreground font-medium cursor-pointer select-none list-none flex items-center gap-1.5 transition-colors">
+            <span className="text-[10px] group-open:rotate-90 transition-transform inline-block">▶</span>
+            <span>⚙️ Parámetros avanzados (Temperatura, Tokens)</span>
+          </summary>
+          <div className="pt-3 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-semibold text-foreground">Temperatura: {temperature.toFixed(2)}</span>
+                  <span className="text-[10px] text-muted-foreground">{temperature <= 0.5 ? 'Factual / Preciso' : 'Creativo'}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                  className="w-full accent-primary cursor-pointer"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground">Max tokens (largo de respuesta)</label>
+                <input
+                  type="number"
+                  min="256"
+                  max="32768"
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(parseInt(e.target.value) || 1024)}
+                  className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none"
+                />
+              </div>
             </div>
-            <input
-              type="range"
-              min="0"
-              max="2"
-              step="0.05"
-              value={temperature}
-              onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="w-full accent-primary cursor-pointer"
-            />
           </div>
-          <div className="space-y-1.5">
-            <div className="flex justify-between items-center text-xs">
-              <span className="font-semibold text-foreground">top_p: {topP.toFixed(2)}</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={topP}
-              onChange={(e) => setTopP(parseFloat(e.target.value))}
-              className="w-full accent-primary cursor-pointer"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-foreground">Max tokens</label>
-            <input
-              type="number"
-              min="1"
-              max="32768"
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(parseInt(e.target.value) || 1024)}
-              className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-foreground">Timeout (s)</label>
-            <input
-              type="number"
-              min="1"
-              max="600"
-              value={timeoutVal}
-              onChange={(e) => setTimeoutVal(parseInt(e.target.value) || 60)}
-              className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none"
-            />
-          </div>
-        </div>
+        </details>
 
         <div className="flex gap-2 flex-wrap pt-2">
           <button
