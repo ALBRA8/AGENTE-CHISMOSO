@@ -22,7 +22,7 @@ export function SettingsView() {
   const tabs: { key: SettingsSection; label: string; icon: string }[] = [
     { key: 'identity', label: 'Identidad', icon: '🏷️' },
     { key: 'provider', label: 'Proveedor IA', icon: '🧠' },
-    { key: 'signals', label: 'Búsqueda y Señales', icon: '🔍' },
+    { key: 'signals', label: 'Búsqueda Web', icon: '🔍' },
     { key: 'telegram', label: 'Telegram', icon: '✈️' },
     { key: 'whatsapp', label: 'WhatsApp', icon: '📱' },
   ];
@@ -521,16 +521,13 @@ function ProviderSection() {
 }
 
 // =====================================================================
-// 3. BÚSQUEDA Y SEÑALES SECTION (CHISMOSO OSINT & Signals APIs)
+// 3. BÚSQUEDA WEB (Motores de búsqueda para investigaciones)
 // =====================================================================
 
 function SignalsSection() {
   const [tavily, setTavily] = React.useState('');
   const [serper, setSerper] = React.useState('');
   const [brave, setBrave] = React.useState('');
-  const [github, setGithub] = React.useState('');
-  const [shodan, setShodan] = React.useState('');
-  const [zai, setZai] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [msg, setMsg] = React.useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -543,9 +540,6 @@ function SignalsSection() {
           setTavily(d.tavily_api_key || '');
           setSerper(d.serper_api_key || '');
           setBrave(d.brave_api_key || '');
-          setGithub(d.github_token || '');
-          setShodan(d.shodan_api_key || '');
-          setZai(d.zai_api_key || '');
         }
       })
       .catch(() => {})
@@ -563,28 +557,25 @@ function SignalsSection() {
           tavily_api_key: tavily,
           serper_api_key: serper,
           brave_api_key: brave,
-          github_token: github,
-          shodan_api_key: shodan,
-          zai_api_key: zai,
         }),
       });
       if (!res.ok) throw new Error('Error al guardar');
-      setMsg({ type: 'ok', text: '✅ APIs de inteligencia y señales guardadas con éxito' });
+      setMsg({ type: 'ok', text: '✅ Motores de búsqueda guardados con éxito' });
     } catch (e: any) {
-      setMsg({ type: 'err', text: e?.message || 'Error al guardar APIs de señales' });
+      setMsg({ type: 'err', text: e?.message || 'Error al guardar motores de búsqueda' });
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <div className="text-xs text-muted-foreground py-8 text-center">Cargando APIs de señales...</div>;
+  if (loading) return <div className="text-xs text-muted-foreground py-8 text-center">Cargando motores de búsqueda...</div>;
 
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold flex items-center gap-2">🔍 Búsqueda y Señales (OSINT / SIGINT)</h2>
+        <h2 className="text-lg font-semibold flex items-center gap-2">🔍 Motores de Búsqueda Web</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Configura los motores de búsqueda profunda y APIs de inteligencia con los que CHISMOSO rastrea la web y detecta anomalías.
+          Configura los motores de búsqueda que CHISMOSO utilizará para rastrear la web e investigar información.
         </p>
       </div>
 
@@ -607,10 +598,6 @@ function SignalsSection() {
         <div className="border border-border/80 rounded-lg px-2.5 py-1 bg-card text-xs flex items-center gap-1.5 shadow-sm">
           <span className={`w-2 h-2 rounded-full ${brave ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
           <span>Brave {brave ? '✓' : '(Sin key)'}</span>
-        </div>
-        <div className="border border-border/80 rounded-lg px-2.5 py-1 bg-card text-xs flex items-center gap-1.5 shadow-sm">
-          <span className={`w-2 h-2 rounded-full ${github ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
-          <span>GitHub {github ? '✓' : '(Sin token)'}</span>
         </div>
       </div>
 
@@ -657,47 +644,17 @@ function SignalsSection() {
           />
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-foreground flex items-center justify-between">
-            <span>GitHub Personal Access Token</span>
-            <span className="text-[10px] text-muted-foreground font-normal">Auditoría de repositorios, commits y clones</span>
-          </label>
-          <input
-            type="password"
-            value={github}
-            onChange={(e) => setGithub(e.target.value)}
-            placeholder="ghp_... o github_pat_..."
-            className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-foreground">Shodan API Key</label>
-            <input
-              type="password"
-              value={shodan}
-              onChange={(e) => setShodan(e.target.value)}
-              placeholder="Shodan key..."
-              className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-foreground">Z-AI Web Dev SDK Key</label>
-            <input
-              type="password"
-              value={zai}
-              onChange={(e) => setZai(e.target.value)}
-              placeholder="zai_..."
-              className="w-full text-xs px-3 py-2 rounded-lg border border-border bg-background focus:ring-1 focus:ring-primary outline-none font-mono"
-            />
-          </div>
-        </div>
-
         <button
           onClick={save}
           disabled={saving}
           className="px-4 py-2 text-xs font-medium rounded-lg bg-foreground text-background hover:opacity-90 disabled:opacity-50 transition-all flex items-center gap-1.5 shadow-sm"
+        >
+          {saving ? '⏳ Guardando...' : '💾 Guardar motores de búsqueda'}
+        </button>
+      </div>
+    </div>
+  );
+}
         >
           {saving ? '⏳ Guardando...' : '💾 Guardar APIs de señales'}
         </button>

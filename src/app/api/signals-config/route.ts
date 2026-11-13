@@ -9,9 +9,6 @@ const DEFAULT_SIGNALS = {
   tavily_api_key: process.env.TAVILY_API_KEY || '',
   serper_api_key: process.env.SERPER_API_KEY || '',
   brave_api_key: process.env.BRAVE_API_KEY || '',
-  github_token: process.env.GITHUB_TOKEN || '',
-  shodan_api_key: process.env.SHODAN_API_KEY || '',
-  zai_api_key: process.env.ZAI_API_KEY || '',
 };
 
 export async function GET() {
@@ -22,9 +19,6 @@ export async function GET() {
       tavily_api_key: json.tavily_api_key || process.env.TAVILY_API_KEY || '',
       serper_api_key: json.serper_api_key || process.env.SERPER_API_KEY || '',
       brave_api_key: json.brave_api_key || process.env.BRAVE_API_KEY || '',
-      github_token: json.github_token || process.env.GITHUB_TOKEN || '',
-      shodan_api_key: json.shodan_api_key || process.env.SHODAN_API_KEY || '',
-      zai_api_key: json.zai_api_key || process.env.ZAI_API_KEY || '',
     });
   } catch {
     return NextResponse.json(DEFAULT_SIGNALS);
@@ -38,9 +32,6 @@ export async function PUT(request: Request) {
       tavily_api_key: (body.tavily_api_key || '').trim(),
       serper_api_key: (body.serper_api_key || '').trim(),
       brave_api_key: (body.brave_api_key || '').trim(),
-      github_token: (body.github_token || '').trim(),
-      shodan_api_key: (body.shodan_api_key || '').trim(),
-      zai_api_key: (body.zai_api_key || '').trim(),
       updated_at: new Date().toISOString(),
     };
 
@@ -50,9 +41,6 @@ export async function PUT(request: Request) {
     if (config.tavily_api_key) process.env.TAVILY_API_KEY = config.tavily_api_key;
     if (config.serper_api_key) process.env.SERPER_API_KEY = config.serper_api_key;
     if (config.brave_api_key) process.env.BRAVE_API_KEY = config.brave_api_key;
-    if (config.github_token) process.env.GITHUB_TOKEN = config.github_token;
-    if (config.shodan_api_key) process.env.SHODAN_API_KEY = config.shodan_api_key;
-    if (config.zai_api_key) process.env.ZAI_API_KEY = config.zai_api_key;
 
     // Persist to .env
     try {
@@ -67,9 +55,6 @@ export async function PUT(request: Request) {
       if (config.tavily_api_key) envMap['TAVILY_API_KEY'] = config.tavily_api_key;
       if (config.serper_api_key) envMap['SERPER_API_KEY'] = config.serper_api_key;
       if (config.brave_api_key) envMap['BRAVE_API_KEY'] = config.brave_api_key;
-      if (config.github_token) envMap['GITHUB_TOKEN'] = config.github_token;
-      if (config.shodan_api_key) envMap['SHODAN_API_KEY'] = config.shodan_api_key;
-      if (config.zai_api_key) envMap['ZAI_API_KEY'] = config.zai_api_key;
 
       const newEnv = Object.entries(envMap).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
       await writeFile(ENV_FILE, newEnv, 'utf-8');
@@ -77,6 +62,6 @@ export async function PUT(request: Request) {
 
     return NextResponse.json({ ok: true, config });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Error al guardar APIs de señales' }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Error al guardar motores de búsqueda' }, { status: 500 });
   }
 }
