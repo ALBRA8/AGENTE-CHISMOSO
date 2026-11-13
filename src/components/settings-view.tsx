@@ -655,13 +655,6 @@ function SignalsSection() {
     </div>
   );
 }
-        >
-          {saving ? '⏳ Guardando...' : '💾 Guardar APIs de señales'}
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // =====================================================================
 // 4. TELEGRAM SECTION (Matches AGENTE GENERAL screenshots exactly)
