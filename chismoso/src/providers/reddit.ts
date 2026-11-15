@@ -11,8 +11,8 @@
  * NO simula datos. Devuelve lo que la búsqueda retorna.
  */
 
-import ZAI from 'z-ai-web-dev-sdk';
 import { makeCapabilities, type IProvider, type ProviderQuery, type ProviderSearchResult, type RawItem } from './base.js';
+import { loadZAI, type ZAIClient } from './zai.js';
 import { ErrorCode, classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ProviderHealth, SourceType } from '../models.js';
@@ -31,7 +31,7 @@ function buildCommunityQuery(query: string): string {
 }
 
 export class RedditProvider implements IProvider {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIClient> | null = null;
   private lastHealthCheck: { ts: number; status: ProviderHealth } = { ts: 0, status: ProviderHealth.OK };
 
   capabilities() {
@@ -49,8 +49,8 @@ export class RedditProvider implements IProvider {
     return true;
   }
 
-  private async getZAI(): Promise<ZAI> {
-    if (!this.zaiPromise) this.zaiPromise = ZAI.create();
+  private async getZAI(): Promise<ZAIClient> {
+    if (!this.zaiPromise) this.zaiPromise = loadZAI();
     return this.zaiPromise;
   }
 

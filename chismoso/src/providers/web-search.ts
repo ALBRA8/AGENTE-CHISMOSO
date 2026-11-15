@@ -8,14 +8,14 @@
  * NO simula. Si la SDK no responde, el error se propaga con ErrorCode apropiado.
  */
 
-import ZAI from 'z-ai-web-dev-sdk';
 import { makeCapabilities, type IProvider, type ProviderQuery, type ProviderSearchResult, type RawItem } from './base.js';
+import { loadZAI, type ZAIClient } from './zai.js';
 import { ErrorCode, classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ProviderHealth, SourceType } from '../models.js';
 
 export class WebSearchProvider implements IProvider {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIClient> | null = null;
   private lastHealthCheck: { ts: number; status: ProviderHealth } = {
     ts: 0,
     status: ProviderHealth.OK,
@@ -36,9 +36,9 @@ export class WebSearchProvider implements IProvider {
     return true; // acepta cualquier query textual
   }
 
-  private async getZAI(): Promise<ZAI> {
+  private async getZAI(): Promise<ZAIClient> {
     if (!this.zaiPromise) {
-      this.zaiPromise = ZAI.create();
+      this.zaiPromise = loadZAI();
     }
     return this.zaiPromise;
   }

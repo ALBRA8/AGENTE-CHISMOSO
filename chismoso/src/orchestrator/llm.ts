@@ -20,7 +20,7 @@
  * investigate route all observe the same breaker state.
  */
 
-import ZAI from 'z-ai-web-dev-sdk';
+import { loadZAI, type ZAIClient } from '../providers/zai.js';
 import { logger } from '../logger.js';
 import { classifyError, ErrorCode } from '../errors.js';
 import { llmCircuitBreaker, CircuitBreakerError } from '../circuit-breaker.js';
@@ -38,10 +38,10 @@ export interface LLMResponse {
 }
 
 export class LLMClient {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIClient> | null = null;
 
-  private async getZAI(): Promise<ZAI> {
-    if (!this.zaiPromise) this.zaiPromise = ZAI.create();
+  private async getZAI(): Promise<ZAIClient> {
+    if (!this.zaiPromise) this.zaiPromise = loadZAI();
     return this.zaiPromise;
   }
 

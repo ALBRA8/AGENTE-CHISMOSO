@@ -1,8 +1,8 @@
-import ZAI from 'z-ai-web-dev-sdk';
+import { loadZAI } from '../src/providers/zai.js';
 
 async function smoke() {
   console.log('[1/3] Creating ZAI instance...');
-  const zai = await ZAI.create();
+  const zai = await loadZAI();
 
   console.log('[2/3] web_search...');
   const t0 = Date.now();

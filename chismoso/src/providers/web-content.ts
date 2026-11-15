@@ -12,8 +12,8 @@
  * confirmación cruzada (sección 16) al aportar evidencia secundaria.
  */
 
-import ZAI from 'z-ai-web-dev-sdk';
 import { makeCapabilities, type IProvider, type ProviderQuery, type ProviderSearchResult, type RawItem } from './base.js';
+import { loadZAI, type ZAIClient } from './zai.js';
 import { ErrorCode, classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ProviderHealth, SourceType } from '../models.js';
@@ -23,7 +23,7 @@ export interface WebContentQuery extends ProviderQuery {
 }
 
 export class WebContentProvider implements IProvider {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIClient> | null = null;
   private lastHealthCheck: { ts: number; status: ProviderHealth } = { ts: 0, status: ProviderHealth.OK };
 
   capabilities() {
@@ -42,8 +42,8 @@ export class WebContentProvider implements IProvider {
     return Array.isArray((q as WebContentQuery).urls) && (q as WebContentQuery).urls.length > 0;
   }
 
-  private async getZAI(): Promise<ZAI> {
-    if (!this.zaiPromise) this.zaiPromise = ZAI.create();
+  private async getZAI(): Promise<ZAIClient> {
+    if (!this.zaiPromise) this.zaiPromise = loadZAI();
     return this.zaiPromise;
   }
 

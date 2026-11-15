@@ -57,7 +57,6 @@
  */
 
 import { NextRequest } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
 import {
   createSession,
   getSession,
@@ -66,6 +65,7 @@ import {
   type ChatSession,
 } from '@/lib/chat-session';
 import { getClientIP, rateLimit } from '@/lib/rate-limit';
+import { loadZAI, type ZAIClient } from '@/lib/zai-client';
 import { getChatTool, toolsForPrompt } from './tools';
 import { authedPOST } from '@/lib/middleware';
 
@@ -97,9 +97,9 @@ const TOKEN_STREAM_DELAY_MS = 12;
 // reuse the cached promise). Same pattern as chismoso LLMClient.
 // ---------------------------------------------------------------------------
 
-let zaiPromise: Promise<ZAI> | null = null;
-function getZAI(): Promise<ZAI> {
-  if (!zaiPromise) zaiPromise = ZAI.create();
+let zaiPromise: Promise<ZAIClient> | null = null;
+function getZAI(): Promise<ZAIClient> {
+  if (!zaiPromise) zaiPromise = loadZAI();
   return zaiPromise;
 }
 
