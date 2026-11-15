@@ -21,9 +21,12 @@ export type ZAIClient = {
 
 let cached: Promise<ZAIClient> | null = null;
 
+// Especificador opaco: ningun bundler resuelve esto en build-time.
+const SDK_SPECIFIER: string = ['z-ai', 'web-dev', 'sdk'].join('-');
+
 export function loadZAI(): Promise<ZAIClient> {
   if (!cached) {
-    cached = import('z-ai-web-dev-sdk' as string)
+    cached = import(/* turbopackIgnore: true */ SDK_SPECIFIER)
       .then((mod: { default: { create: () => Promise<ZAIClient> } }) => mod.default.create())
       .catch((e: unknown) => {
         cached = null;

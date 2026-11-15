@@ -17,13 +17,13 @@ async function smoke() {
 
   console.log('[3/3] chat.completions...');
   const t1 = Date.now();
-  const completion = await zai.chat.completions.create({
+  const completion = (await zai.chat.completions.create({
     messages: [
       { role: 'system', content: 'Respond in one short sentence.' },
       { role: 'user', content: 'Say "CHISMOSO ready".' },
     ],
     thinking: { type: 'disabled' },
-  });
+  })) as { choices?: Array<{ message?: { content?: string } }> };
   console.log(`  -> completion in ${Date.now() - t1}ms`);
   console.log('  response:', completion.choices?.[0]?.message?.content);
 }
