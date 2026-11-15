@@ -111,6 +111,12 @@ RUN bunx tsc
 # -----------------------------------------------------------------------------
 FROM oven/bun:1.3-alpine AS builder
 
+# node en el builder: `next build` con Turbopack lanza sus workers con
+# process.execPath; bajo Bun chocan con better-sqlite3 (napi) y crash
+# ("NAPI FATAL ERROR ... Bun has crashed" — bug de Bun, no del código).
+# Ejecutamos el build con node explícito; bun queda para install/lockfile.
+RUN apk add --no-cache nodejs
+
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1 \
@@ -142,7 +148,7 @@ COPY . .
 # tsc` BEFORE next build — defense-in-depth so the build NEVER runs against a
 # stale chismoso/dist. If `output: "standalone"` is missing from next.config.ts
 # the build script's build.sh self-heals it; here we trust the committed config.
-RUN bun run build
+RUN node ./node_modules/next/dist/bin/next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
 
 
 # -----------------------------------------------------------------------------
