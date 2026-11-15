@@ -68,12 +68,17 @@ RUN bun install --frozen-lockfile
 # -----------------------------------------------------------------------------
 FROM oven/bun:1.3-alpine AS chismoso-runtime-deps
 
-RUN apk add --no-cache python3 make g++ \
+RUN apk add --no-cache python3 make g++ nodejs npm \
     && ln -sf python3 /usr/bin/python
 
 WORKDIR /app/chismoso
 COPY chismoso/package.json chismoso/bun.lock ./
 RUN bun install --frozen-lockfile --production
+
+# better-sqlite3 queda compilado con el ABI de bun: el RUNTIME es node:20
+# → recompilar contra los headers de node (si no, ERR_DLOPEN_FAILED al
+# cargarlo desde el server de Next en el contenedor).
+RUN npm rebuild better-sqlite3
 
 # -----------------------------------------------------------------------------
 # Stage 4: chismoso-builder
@@ -115,7 +120,7 @@ FROM oven/bun:1.3-alpine AS builder
 # process.execPath; bajo Bun chocan con better-sqlite3 (napi) y crash
 # ("NAPI FATAL ERROR ... Bun has crashed" — bug de Bun, no del código).
 # Ejecutamos el build con node explícito; bun queda para install/lockfile.
-RUN apk add --no-cache nodejs
+RUN apk add --no-cache nodejs npm python3 make g++
 
 WORKDIR /app
 
@@ -148,7 +153,13 @@ COPY . .
 # tsc` BEFORE next build — defense-in-depth so the build NEVER runs against a
 # stale chismoso/dist. If `output: "standalone"` is missing from next.config.ts
 # the build script's build.sh self-heals it; here we trust the committed config.
-RUN node ./node_modules/next/dist/bin/next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
+# better-sqlite3 en node_modules (raíz y chismoso) fue compilado por bun:
+# recompilar con ABI de node antes de que el build lo cargue.
+RUN npm rebuild --prefix /app better-sqlite3 \
+ && npm rebuild --prefix /app/chismoso better-sqlite3 \
+ && node ./node_modules/next/dist/bin/next build \
+ && cp -r .next/static .next/standalone/.next/ \
+ && cp -r public .next/standalone/
 
 
 # -----------------------------------------------------------------------------
