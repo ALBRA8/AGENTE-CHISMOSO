@@ -52,6 +52,12 @@ const nextConfig: NextConfig = {
   compress: true,
   reactStrictMode: true,
 
+  // z-ai-web-dev-sdk NO está en el registry público npm: el build de la imagen
+  // OCI no lo instala. Declararlo externo del servidor difiere su resolución a
+  // runtime — los endpoints que lo usan degradan con error honesto
+  // (ZAI_SDK_UNAVAILABLE) en vez de romper el build. Ver src/lib/zai-client.ts.
+  serverExternalPackages: ['z-ai-web-dev-sdk'],
+
   // P0-2 (R2-IMP-OBS): source maps for client AND server bundles.
   //
   // Without these, Sentry (and any other error tracker) receives
