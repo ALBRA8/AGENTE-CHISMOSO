@@ -77,8 +77,9 @@ RUN bun install --frozen-lockfile --production
 
 # better-sqlite3 queda compilado con el ABI de bun: el RUNTIME es node:20
 # → recompilar contra los headers de node (si no, ERR_DLOPEN_FAILED al
-# cargarlo desde el server de Next en el contenedor).
-RUN npm rebuild better-sqlite3
+# cargarlo desde el server de Next en el contenedor). node-gyp directo:
+# npm rebuild choca con los overrides del lockfile de bun (EOVERRIDE).
+RUN cd node_modules/better-sqlite3 && npx --yes node-gyp rebuild
 
 # -----------------------------------------------------------------------------
 # Stage 4: chismoso-builder
@@ -154,9 +155,11 @@ COPY . .
 # stale chismoso/dist. If `output: "standalone"` is missing from next.config.ts
 # the build script's build.sh self-heals it; here we trust the committed config.
 # better-sqlite3 en node_modules (raíz y chismoso) fue compilado por bun:
-# recompilar con ABI de node antes de que el build lo cargue.
-RUN npm rebuild --prefix /app better-sqlite3 \
- && npm rebuild --prefix /app/chismoso better-sqlite3 \
+# recompilar con ABI de node (node-gyp directo; npm rebuild choca con los
+# overrides del lockfile de bun) antes de que el build lo cargue.
+RUN cd /app/node_modules/better-sqlite3 && npx --yes node-gyp rebuild \
+ && cd /app/chismoso/node_modules/better-sqlite3 && npx --yes node-gyp rebuild \
+ && cd /app \
  && node ./node_modules/next/dist/bin/next build \
  && cp -r .next/static .next/standalone/.next/ \
  && cp -r public .next/standalone/
