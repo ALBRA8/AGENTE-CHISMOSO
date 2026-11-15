@@ -7,7 +7,6 @@
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.32.1",
         "better-sqlite3": "^11.3.0",
-        "z-ai-web-dev-sdk": "^0.0.18",
       },
       "devDependencies": {
         "@types/better-sqlite3": "^7.6.11",
@@ -460,8 +459,6 @@
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": "cli.js" }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
     "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
-
-    "z-ai-web-dev-sdk": ["z-ai-web-dev-sdk@file:../../.bun/install/global/node_modules/z-ai-web-dev-sdk", { "devDependencies": { "@types/node": "^20.0.0", "typescript": "^5.8.3" }, "bin": { "z-ai": "dist/cli.js", "z-ai-generate": "dist/cli.js" } }],
 
     "zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
 
