@@ -29,12 +29,10 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
+// Ruta portátil: el default ya no apunta a una ruta del sandbox; el compose
+// y el CLI fijan CHISMOSO_DB_PATH (/data/chismoso.db en la imagen OCI).
 const DB_PATH =
-  process.env.CHISMOSO_DB_PATH ?? '/home/z/my-project/chismoso/data/chismoso.db';
-
-// Ensure parent dir exists — the mesh DB helper originally skipped this,
-// which caused /api/mesh/config to 500 when chismoso had not yet been run.
-mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  process.env.CHISMOSO_DB_PATH ?? path.resolve('chismoso/data/chismoso.db');
 
 // Use global to survive Next.js HMR in dev (a fresh module graph would
 // otherwise re-instantiate the Database and leak file descriptors).
@@ -42,23 +40,47 @@ const globalForDb = globalThis as unknown as {
   __chismosoDb?: Database.Database;
 };
 
-export const chismosoDb: Database.Database =
-  globalForDb.__chismosoDb ?? new Database(DB_PATH, { readonly: true });
+/**
+ * Apertura PEREZOSA: la conexión se crea en el primer USO, nunca en la
+ * evaluación del módulo. `next build` (collecting page data) evalúa este
+ * módulo sin que exista la BD — abrir en modo readonly un archivo inexistente
+ * rompía el build (y bajo Bun, crasheaba los workers con un panic NAPI).
+ */
+function openChismosoDb(): Database.Database {
+  const existing = globalForDb.__chismosoDb;
+  if (existing) return existing;
+  // Ensure parent dir exists — the mesh DB helper originally skipped this,
+  // which caused /api/mesh/config to 500 when chismoso had not yet been run.
+  mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  const db = new Database(DB_PATH, { readonly: true });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForDb.__chismosoDb = chismosoDb;
+  // Ensure indexes exist (idempotent — same as SCHEMA_V2 in chismoso/src/db.ts).
+  // Sobre una conexión readonly esto solo funciona si los índices ya existen
+  // (no-op sin escritura); si el CLI aún no creó la BD/índices, degradamos
+  // honesto: el escritor los creará en su primera escritura.
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_signals_topic_timestamp ON signals(topic, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_trends_created_at ON trends(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_problems_created_at ON problems(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_score ON opportunities(score DESC);
+      CREATE INDEX IF NOT EXISTS idx_evidence_topic_collected ON evidence(topic, collected_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_provider_runs_investigation ON provider_runs(investigation_id);
+    `);
+  } catch {
+    // BD readonly sin índices aún — las queries funcionan sin ellos (más lentas).
+  }
+  globalForDb.__chismosoDb = db;
+  return db;
 }
 
-// Ensure indexes exist (idempotent — same as SCHEMA_V2 in chismoso/src/db.ts
-// but applied to the readonly reader too, so a Next.js process that starts
-// before the CLI has run still gets the performance benefit once data is
-// inserted by a later CLI run).
-chismosoDb.exec(`
-  CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_signals_topic_timestamp ON signals(topic, timestamp DESC);
-  CREATE INDEX IF NOT EXISTS idx_trends_created_at ON trends(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_problems_created_at ON problems(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_opportunities_score ON opportunities(score DESC);
-  CREATE INDEX IF NOT EXISTS idx_evidence_topic_collected ON evidence(topic, collected_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_provider_runs_investigation ON provider_runs(investigation_id);
-`);
+export const chismosoDb: Database.Database = new Proxy({} as Database.Database, {
+  get(_target, prop) {
+    const db = openChismosoDb();
+    const value = (db as unknown as Record<string | symbol, unknown>)[prop];
+    return typeof value === 'function'
+      ? (value as (...args: unknown[]) => unknown).bind(db)
+      : value;
+  },
+});
