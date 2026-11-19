@@ -58,7 +58,7 @@ import {
 } from '../intelligence/clustering.js';
 import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
-import { generateOpportunity } from '../intelligence/opportunities.js';
+import { generateOpportunity, makeOpportunityDedupper } from '../intelligence/opportunities.js';
 import { buildReport } from './reporter.js';
 import { buildFicha } from '../ficha/builder.js';
 import { renderFichaMarkdown, FICHAS_DIR } from '../ficha/renderer.js';
@@ -429,6 +429,11 @@ export class Orchestrator {
       const opportunities: Opportunity[] = [];
       const v1Payloads: Array<{ id: string; v1: import('../schema/opportunity-v1.js').OpportunityV1 }> = [];
       let droppedForSchema = 0;
+      // FASE-3-QUALITY §3.6 — dedup by niche+geography. Only the FIRST
+      // opportunity per (niche, geography) pair is persisted; subsequent
+      // duplicates are skipped so AGENTE-LEADS doesn't receive near-identical
+      // payloads for the same market.
+      const isUniqueOpp = makeOpportunityDedupper();
       for (const trend of trends) {
         const matchingProblem = problems.find((p) => p.topic === trend.topic);
         // Usamos las señales/evidencia ya agrupadas en el trend (vienen del
@@ -450,6 +455,15 @@ export class Orchestrator {
         });
         if (weak) {
           logger.info('Skipping weak opportunity', { title: opportunity.title, score: opportunity.score });
+          continue;
+        }
+        if (!isUniqueOpp(opportunity)) {
+          // FASE-3-QUALITY §3.6 — duplicate (niche+geography) of an
+          // opportunity already persisted in this run. Skip.
+          logger.info('Skipping duplicate opportunity (niche+geography)', {
+            title: opportunity.title,
+            geography: opportunity.geography,
+          });
           continue;
         }
         if (!v1) {

@@ -54,7 +54,7 @@ import {
 } from '../intelligence/clustering.js';
 import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
-import { generateOpportunity } from '../intelligence/opportunities.js';
+import { generateOpportunity, makeOpportunityDedupper } from '../intelligence/opportunities.js';
 import { buildReport } from './reporter.js';
 import { buildFicha } from '../ficha/builder.js';
 import { renderFichaMarkdown, FICHAS_DIR } from '../ficha/renderer.js';
@@ -737,6 +737,9 @@ export class ReActOrchestrator {
 
       // OPPORTUNITY ENGINE
       const opportunities: Opportunity[] = [];
+      // FASE-3-QUALITY §3.6 — dedup by niche+geography so AGENTE-LEADS
+      // doesn't receive near-identical payloads for the same market.
+      const isUniqueOpp = makeOpportunityDedupper();
       for (const trend of trends) {
         const matchingProblem = problems.find((p) => p.topic === trend.topic);
         const oppSignals = trend.signals.length > 0 ? trend.signals : signals.filter((s) => s.topic === trend.topic);
@@ -752,37 +755,46 @@ export class ReActOrchestrator {
           geography,
         });
         if (!weak) {
-          opportunities.push(opportunity);
-          this.cfg.repositories.opportunities.insert(opportunity, investigationId);
-          // ----------------------------------------------------------------
-          // FICHA.md generation (Task IMP-CLONA-1, ClonaKit pattern).
-          //
-          // Same wiring as the standard Orchestrator — after persisting
-          // the Opportunity, synthesise a ClonaKit-style FICHA spec and
-          // write it to disk so a downstream builder agent can pick it
-          // up. Best-effort: never fail the investigation over a FICHA.
-          // ----------------------------------------------------------------
-          try {
-            const ficha = await buildFicha(
-              {
-                opportunity,
-                trend,
-                problem: matchingProblem,
-                evidence: oppEvidence,
-                investigationId,
-              },
-              this.cfg.llm,
-            );
-            const markdown = renderFichaMarkdown(ficha);
-            mkdirSync(FICHAS_DIR, { recursive: true });
-            const fichaPath = path.join(FICHAS_DIR, `ficha-${opportunity.id}.md`);
-            writeFileSync(fichaPath, markdown, 'utf8');
-            logger.info('ReAct: FICHA generated', { opportunityId: opportunity.id, fichaPath });
-          } catch (fichaErr: any) {
-            logger.warn('ReAct: FICHA generation failed', {
-              opportunityId: opportunity.id,
-              err: fichaErr?.message ?? String(fichaErr),
+          if (!isUniqueOpp(opportunity)) {
+            // FASE-3-QUALITY §3.6 — duplicate (niche+geography) of an
+            // opportunity already persisted in this run. Skip.
+            logger.info('ReAct: skipping duplicate opportunity (niche+geography)', {
+              title: opportunity.title,
+              geography: opportunity.geography,
             });
+          } else {
+            opportunities.push(opportunity);
+            this.cfg.repositories.opportunities.insert(opportunity, investigationId);
+            // ----------------------------------------------------------------
+            // FICHA.md generation (Task IMP-CLONA-1, ClonaKit pattern).
+            //
+            // Same wiring as the standard Orchestrator — after persisting
+            // the Opportunity, synthesise a ClonaKit-style FICHA spec and
+            // write it to disk so a downstream builder agent can pick it
+            // up. Best-effort: never fail the investigation over a FICHA.
+            // ----------------------------------------------------------------
+            try {
+              const ficha = await buildFicha(
+                {
+                  opportunity,
+                  trend,
+                  problem: matchingProblem,
+                  evidence: oppEvidence,
+                  investigationId,
+                },
+                this.cfg.llm,
+              );
+              const markdown = renderFichaMarkdown(ficha);
+              mkdirSync(FICHAS_DIR, { recursive: true });
+              const fichaPath = path.join(FICHAS_DIR, `ficha-${opportunity.id}.md`);
+              writeFileSync(fichaPath, markdown, 'utf8');
+              logger.info('ReAct: FICHA generated', { opportunityId: opportunity.id, fichaPath });
+            } catch (fichaErr: any) {
+              logger.warn('ReAct: FICHA generation failed', {
+                opportunityId: opportunity.id,
+                err: fichaErr?.message ?? String(fichaErr),
+              });
+            }
           }
         } else {
           logger.info('ReAct: skipping weak opportunity', {

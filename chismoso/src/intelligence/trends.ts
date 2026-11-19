@@ -76,6 +76,9 @@ function publicationMillis(s: Signal): number {
  *
  * New approach: compute growth from the publication date distribution of
  * the CURRENT signals themselves.
+ *   - If all signals share the same calendar day → growth = 0.5 (no
+ *     distribution, can't prove acceleration; spec: "If all signals same
+ *     date → growth = 0.5").
  *   - recent   = signals published in the last 14 days
  *   - previous = signals published in days 14..28
  *   - growth   = recent / max(1, previous)
@@ -89,6 +92,14 @@ function publicationMillis(s: Signal): number {
  */
 function growthFromDateDistribution(signals: Signal[]): number {
   if (signals.length === 0) return 0;
+
+  // FASE-3-QUALITY §3.3 — "If all signals same date → growth = 0.5".
+  // Check calendar-day granularity (UTC) so ms-level jitter across
+  // consecutive Date.now() calls doesn't mask the "same day" case.
+  if (allSignalsSameCalendarDay(signals)) {
+    return 0.5;
+  }
+
   const now = Date.now();
   const dayMs = 24 * 3600 * 1000;
   const recentCutoff = now - 14 * dayMs;
@@ -107,6 +118,27 @@ function growthFromDateDistribution(signals: Signal[]): number {
     return recent > 0 ? 1.0 : 0.5;
   }
   return Math.min(2.0, recent / previous);
+}
+
+/**
+ * Returns true when every signal in the list was published on the same
+ * UTC calendar day. Used by `growthFromDateDistribution` to detect the
+ * "all signals same date" case mandated by FASE-3-QUALITY §3.3.
+ */
+function allSignalsSameCalendarDay(signals: Signal[]): boolean {
+  if (signals.length <= 1) return true;
+  let lastKey: string | null = null;
+  for (const s of signals) {
+    const ms = publicationMillis(s);
+    const d = new Date(ms);
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+    if (lastKey === null) {
+      lastKey = key;
+    } else if (key !== lastKey) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**

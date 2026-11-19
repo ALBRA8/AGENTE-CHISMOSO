@@ -9,12 +9,15 @@
  * Debe existir evidencia de repetición, relevancia o intensidad.
  *
  * FASE-3-QUALITY §3.5 — concrete problem descriptions.
- * Each detected Problem's `description` MUST include:
- *   - WHO suffers the problem (segment inferred from evidence, or
- *     "segmento desconocido" when the segment can't be inferred).
- *   - WHAT the pain is (extracted from the signal snippets, not a
- *     template like "Recurring friction observed around X").
- *   - A supporting quote from the top evidence signal.
+ * Each detected Problem's `description` follows the template:
+ *     `${segment} sufre ${pain}. Evidencia: "${quote}"`
+ * Where:
+ *   - `segment` is the inferred segment label, or "Segmento desconocido"
+ *     when the segment can't be inferred from the evidence.
+ *   - `pain` is a short phrase extracted from the signal snippets
+ *     (the clause containing the friction keyword), never a generic
+ *     placeholder.
+ *   - `quote` is a verbatim excerpt from the top evidence signal.
  *
  * When the segment can't be inferred, confidence is lowered (the problem
  * is real but we don't know who it affects).
@@ -208,16 +211,17 @@ function computeFrequency(signals: Signal[]): number {
 /**
  * FASE-3-QUALITY §3.5 — concrete problem description.
  *
- * Structure:
- *   WHO: <segment> (or "segmento desconocido" when none inferred)
- *   WHAT: <pain phrase extracted from snippets>
- *   Quote: "<excerpt from top evidence signal>"
+ * Template (literal):
+ *     `${segment} sufre ${pain}. Evidencia: "${quote}"`
  *
- * The pain phrase is derived by extracting the most informative sentence
- * from the top evidence signal — i.e. the longest signal whose snippet
- * matches a friction pattern. We no longer use the template
- * `Recurring friction observed around "X"` because it carries zero
- * actionable information.
+ * Where:
+ *   - `segment` is the inferred segment label, or "Segmento desconocido"
+ *     (capitalized) when no segment could be inferred from the evidence.
+ *   - `pain` is a short phrase extracted from the top evidence signal's
+ *     snippet (the clause containing the friction keyword). Falls back
+ *     to a niche-grounded phrase only when extraction fails.
+ *   - `quote` is a verbatim excerpt (<=180 chars) from the top evidence
+ *     signal.
  *
  * The `segmentUnknown` flag is set when no segment could be inferred
  * from the evidence — in that case the description explicitly says so,
@@ -236,22 +240,18 @@ function describeProblem(
   const snippet = topSignal?.rawSnippet ?? '';
   const quote = excerpt(snippet, 180);
 
-  // WHAT: derive a short pain phrase from the snippet. We try to extract
-  // the clause that contains the friction keyword (e.g. "I lost two
-  // reservations last week" rather than the whole 300-char sentence).
+  // Pain phrase: extract the clause that contains the friction keyword
+  // (e.g. "I lost two reservations last week" rather than the whole
+  // 300-char sentence). Falls back to a niche-grounded phrase.
   const painPhrase = extractPainPhrase(snippet) ?? `fricción recurrente en ${canonical}`;
 
-  // WHO: segment label (Spanish, since CHISMOSO targets Spanish-speaking
-  // LATAM operators primarily).
-  const whoLabel = segmentUnknown
-    ? 'segmento desconocido'
+  // Segment label (Spanish — CHISMOSO targets LATAM operators primarily).
+  // When unknown, use "Segmento desconocido" (capitalized) per spec.
+  const segment = segmentUnknown
+    ? 'Segmento desconocido'
     : segmentsAffected.slice(0, 3).map(humanizeSegment).join(', ');
 
-  return [
-    `QUIÉN: ${whoLabel}.`,
-    `QUÉ: ${painPhrase}.`,
-    `Evidencia: "${quote}"`,
-  ].join(' ');
+  return `${segment} sufre ${painPhrase}. Evidencia: "${quote}"`;
 }
 
 /**

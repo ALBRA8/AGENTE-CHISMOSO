@@ -90,8 +90,23 @@ function resolveGeoKey(geography: string): string | undefined {
  *   - decayPenalty: -0.1..-0.4 for signals older than 90 days.
  *
  * Returned value is clamped to [0, 1].
+ *
+ * FASE-3-QUALITY §3.1 — the canonical API is the 3-arg form
+ * `scoreRelevance(signal, objective, geography)`. The legacy
+ * `scoreRelevance(signal, ctx)` overload is kept for callers that
+ * supply a custom threshold.
  */
-export function scoreRelevance(signal: Signal, ctx: RelevanceContext): number {
+export function scoreRelevance(signal: Signal, objective: string, geography: string): number;
+export function scoreRelevance(signal: Signal, ctx: RelevanceContext): number;
+export function scoreRelevance(
+  signal: Signal,
+  objectiveOrCtx: string | RelevanceContext,
+  geography?: string,
+): number {
+  const ctx: RelevanceContext =
+    typeof objectiveOrCtx === 'string'
+      ? { objective: objectiveOrCtx, geography: geography ?? 'global' }
+      : objectiveOrCtx;
   const objTokens = new Set(tokenize(ctx.objective));
   if (objTokens.size === 0) {
     // No objective tokens → can't meaningfully score. Default to neutral

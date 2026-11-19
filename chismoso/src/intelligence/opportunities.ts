@@ -532,9 +532,10 @@ function topSecondaryToken(signals: Signal[], primary: string): string | undefin
  *   "Ofrecer <product/service> para <segment> en <geography> que
  *    resuelve <pain phrase from problem>."
  *
- * The pain phrase comes from the problem description's "QUÉ:" clause
- * (FASE-3-QUALITY §3.5), so the value prop is grounded in the evidence
- * rather than a generic template.
+ * The pain phrase comes from the problem description's clause between
+ * "sufre " and ". Evidencia:" (FASE-3-QUALITY §3.5 template
+ * `${segment} sufre ${pain}. Evidencia: "${quote}"`), so the value
+ * prop is grounded in the evidence rather than a generic template.
  */
 function deriveValueProposition(
   problem: Problem | undefined,
@@ -548,14 +549,19 @@ function deriveValueProposition(
 }
 
 /**
- * Extract the pain phrase from a Problem description's "QUÉ:" clause.
- * Falls back to the full problem description when the structure isn't
- * the FASE-3-QUALITY §3.5 format (e.g. problems persisted before the
- * fix, or problems created by tests).
+ * Extract the pain phrase from a Problem description built with the
+ * FASE-3-QUALITY §3.5 template:
+ *     `${segment} sufre ${pain}. Evidencia: "${quote}"`
+ *
+ * Returns the `${pain}` clause. Falls back to the full problem
+ * description (truncated) when the structure isn't the §3.5 format —
+ * e.g. problems persisted before the fix, or problems created by
+ * tests that bypass `describeProblem`.
  */
 function extractPainFromProblem(problem: Problem | undefined): string {
   if (!problem) return 'fricción no diagnosticada';
-  const m = problem.description.match(/QUÉ:\s*(.+?)(?:\.\s*Evidencia:|$)/s);
+  // Match the §3.5 template: "<segment> sufre <pain>. Evidencia: \"<quote>\""
+  const m = problem.description.match(/sufre\s+(.+?)\.\s+Evidencia:/s);
   if (m && m[1]) return m[1].trim();
   return problem.description.slice(0, 200);
 }
@@ -817,4 +823,66 @@ function deriveNicheFromTitle(title: string): string {
   t = t.replace(/\s+en\s+[\w\s]+$/i, '');
   t = t.replace(/\s+para\s+[\w\s]+$/i, '');
   return t.trim().toLowerCase() || 'oportunidad sin nombre';
+}
+
+// ---------------------------------------------------------------------------
+// DEDUP (FASE-3-QUALITY §3.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a dedup key for an opportunity: `niche|geography` (both lowercased
+ * and trimmed). Two opportunities with the same niche + geography are
+ * considered duplicates — the spec mandates only ONE opportunity per
+ * (niche, geography) pair reaches AGENTE-LEADS.
+ *
+ * Niche is read from `opportunity.metadata.niche` (set by
+ * `generateOpportunity`); when missing (legacy rows persisted before
+ * FASE-3-QUALITY), it's best-effort derived from the title.
+ */
+export function opportunityDedupKey(opp: Opportunity): string {
+  const meta = (opp.metadata ?? {}) as { niche?: string };
+  const nicheRaw = (meta.niche ?? deriveNicheFromTitle(opp.title)).toLowerCase().trim();
+  const geoRaw = (opp.geography ?? 'global').toLowerCase().trim();
+  return `${nicheRaw}|${geoRaw}`;
+}
+
+/**
+ * Returns a stateful predicate that returns `true` the FIRST time it sees
+ * a given (niche, geography) pair, and `false` for every subsequent
+ * duplicate. Used by the orchestrator to skip duplicate opportunities
+ * before they're persisted or pushed to the mesh.
+ *
+ * Usage:
+ *   const isUnique = makeOpportunityDedupper();
+ *   for (const opp of generated) {
+ *     if (!isUnique(opp)) continue; // skip duplicate
+ *     // ... persist + publish
+ *   }
+ */
+export function makeOpportunityDedupper(): (opp: Opportunity) => boolean {
+  const seen = new Set<string>();
+  return (opp: Opportunity): boolean => {
+    const key = opportunityDedupKey(opp);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+}
+
+/**
+ * Pure helper: filter a list of opportunities down to unique (niche,
+ * geography) pairs, preserving the first occurrence of each. Exposed for
+ * unit tests and for orchestrator code paths that batch-generate before
+ * deduping.
+ */
+export function dedupOpportunities(opps: Opportunity[]): Opportunity[] {
+  const seen = new Set<string>();
+  const out: Opportunity[] = [];
+  for (const opp of opps) {
+    const key = opportunityDedupKey(opp);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(opp);
+  }
+  return out;
 }
