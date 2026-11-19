@@ -1,0 +1,81 @@
+{
+  "searchParameters": {
+    "q": "oportunidades de negocio restaurantes Colombia",
+    "gl": "co",
+    "hl": "es",
+    "num": 10,
+    "type": "search"
+  },
+  "organic": [
+    {
+      "title": "Restaurantes en Colombia: crecimiento del sector 2025",
+      "link": "https://www.eltiempo.com/economia/restaurantes-colombia-crecimiento-2025",
+      "snippet": "El sector de restaurantes en Colombia creció 12% en 2024. Los dueños de restaurantes en Bogotá y Medellín reportan problemas para gestionar reservas por WhatsApp, pierden hasta 30% de reservas por respuesta lenta.",
+      "position": 1,
+      "date": "2025-09-15"
+    },
+    {
+      "title": "WhatsApp automatización para restaurantes en Bogotá",
+      "link": "https://www.larepublica.co/tecnologia/whatsapp-restaurantes-bogota",
+      "snippet": "Restaurantes bogotanos adoptan automatización de WhatsApp para reservas. PYMEs del sector gastronómico pierden clientes por gestión manual. Costo promedio de un sistema: $200 USD mensual.",
+      "position": 2,
+      "date": "2025-08-20"
+    },
+    {
+      "title": "Cómo abrir un restaurante en Colombia 2025",
+      "link": "https://www.portafolio.com.co/economia/abrir-restaurante-colombia",
+      "snippet": "Guía paso a paso para abrir un restaurante en Colombia. El 65% de los nuevos restaurantes fracasa en el primer año por mala gestión operativa. Problemas frecuentes: gestión de inventario, reservas y pago.",
+      "position": 3,
+      "date": "2025-07-10"
+    },
+    {
+      "title": "Restaurantes Medellín: demanda creciente de comida a domicilio",
+      "link": "https://www.dinero.com/empresas/restaurantes-medellin-delivery",
+      "snippet": "Demanda de comida a domicilio en Medellín creció 40% en 2024. Restaurantes locales luchan con la logística de delivery manual. Mercados competitivos: Rappi, iFood, Uber Eats dominan el delivery.",
+      "position": 4,
+      "date": "2025-06-05"
+    },
+    {
+      "title": "Problemas comunes en restaurantes de Cali",
+      "link": "https://www.semana.com/economia/problemas-restaurantes-cali",
+      "snippet": "Restaurantes caleños reportan fricción con la gestión de mesa y reservas. Dueños pierden horas al día confirmando reservas manualmente. Necesitan una herramienta para automatizar.",
+      "position": 5,
+      "date": "2025-05-12"
+    },
+    {
+      "title": "Restaurant tech startups Colombia",
+      "link": "https://www.larepublica.co/startups/restaurant-tech-colombia",
+      "snippet": "Startups colombianas como YoResto y Reservo construyen software para restaurantes. Mercado de restaurant tech en LATAM valorado en USD 500M con crecimiento del 25% anual.",
+      "position": 6,
+      "date": "2025-09-01"
+    },
+    {
+      "title": "Gestión de reservas para restaurantes: comparativa de herramientas",
+      "link": "https://www.eltiempo.com/tecnologia/comparativa-reservas-restaurantes",
+      "snippet": "Comparativa de sistemas de reservas: Resy, OpenTable, Reservo. La mayoría cobra $200-500 USD al mes, fuera del alcance de PYMEs colombianas. Alternativas accesibles son escasas.",
+      "position": 7,
+      "date": "2025-08-30"
+    },
+    {
+      "title": "Restaurantes en Barranquilla: carnaval y demanda estacional",
+      "link": "https://www.heraldo.co/barranquilla/restaurantes-carnaval",
+      "snippet": "Restaurantes de Barranquilla triplican su demanda durante el Carnaval. La gestión manual de reservas colapsa durante eventos. Software de reservas podría resolver el problema.",
+      "position": 8,
+      "date": "2025-02-15"
+    },
+    {
+      "title": "Restaurantes colombianos adoptan IA",
+      "link": "https://www.portafolio.com.co/tecnologia/restaurantes-ia-colombia",
+      "snippet": "Adopción de inteligencia artificial en restaurantes colombianos crece 35%. Casos de uso: chatbots para reservas, optimización de menú, predicción de demanda. Tendencia emergente.",
+      "position": 9,
+      "date": "2025-09-22"
+    },
+    {
+      "title": "Cadena de restaurantes colombiana expande operaciones",
+      "link": "https://www.dinero.com/empresas/cadena-restaurantes-expande",
+      "snippet": "Cadena El Corral anunció apertura de 15 nuevas ubicaciones en Colombia. La expansión requiere sistemas de gestión centralizada. El mercado de restaurantes formales sigue creciendo pese a la inflación.",
+      "position": 10,
+      "date": "2025-04-18"
+    }
+  ]
+}

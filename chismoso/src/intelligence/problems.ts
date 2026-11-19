@@ -7,6 +7,17 @@
  *
  * Regla crítica: sentimiento negativo ≠ automáticamente problema de negocio.
  * Debe existir evidencia de repetición, relevancia o intensidad.
+ *
+ * FASE-3-QUALITY §3.5 — concrete problem descriptions.
+ * Each detected Problem's `description` MUST include:
+ *   - WHO suffers the problem (segment inferred from evidence, or
+ *     "segmento desconocido" when the segment can't be inferred).
+ *   - WHAT the pain is (extracted from the signal snippets, not a
+ *     template like "Recurring friction observed around X").
+ *   - A supporting quote from the top evidence signal.
+ *
+ * When the segment can't be inferred, confidence is lowered (the problem
+ * is real but we don't know who it affects).
  */
 
 import type { Evidence, Problem, Signal } from '../models.js';
@@ -98,26 +109,47 @@ export function detectProblem(input: ProblemInput): ProblemResult {
 
   const severity = computeSeverity(candidateSignals);
   const frequency = computeFrequency(signals);
-  const confidence = Math.min(
+  const inferredSegments = input.segmentsAffected ?? inferSegments(candidateSignals);
+  const segmentsAffected = inferredSegments.length > 0 ? inferredSegments : [];
+  const segmentUnknown = segmentsAffected.length === 0;
+  // FASE-3-QUALITY §3.5 — when the segment can't be inferred from
+  // evidence, lower the confidence. The problem is still real (we have
+  // 2+ friction signals), but we don't know WHO it affects — that's a
+  // meaningful uncertainty the downstream opportunity engine should
+  // factor in.
+  const baseConfidence = Math.min(
     0.9,
     0.3 + candidateSignals.length * 0.07 + distinctSnippets.size * 0.05,
   );
+  const confidence = segmentUnknown ? Math.max(0.1, baseConfidence - 0.2) : baseConfidence;
 
   const now = nowISO();
-  const timestamps = signals.map((s) => s.timestamp).sort();
+  // FASE-3-QUALITY §3.3 — use observedAt (publication date) for firstSeen/
+  // lastSeen when available, so the problem reflects WHEN the underlying
+  // complaints were published, not when CHISMOSO captured them.
+  const pubMillis = candidateSignals
+    .map((s) => {
+      const obs = s.observedAt ? Date.parse(s.observedAt) : NaN;
+      if (!Number.isNaN(obs)) return obs;
+      const ts = Date.parse(s.timestamp);
+      return Number.isNaN(ts) ? Date.now() : ts;
+    })
+    .sort((a, b) => a - b);
+  const firstSeen = pubMillis.length > 0 ? new Date(pubMillis[0]).toISOString() : now;
+  const lastSeen = pubMillis.length > 0 ? new Date(pubMillis[pubMillis.length - 1]).toISOString() : now;
 
   const problem: Problem = {
     id: generateId('prob'),
-    description: describeProblem(canonical, candidateSignals),
+    description: describeProblem(canonical, candidateSignals, segmentsAffected, segmentUnknown),
     topic: input.topic,
     severity,
     frequency,
     confidence,
     evidence: evidence.slice(0, 20),
     signals: candidateSignals.slice(0, 20),
-    segmentsAffected: input.segmentsAffected ?? inferSegments(candidateSignals),
-    firstSeen: timestamps[0] ?? now,
-    lastSeen: timestamps[timestamps.length - 1] ?? now,
+    segmentsAffected,
+    firstSeen,
+    lastSeen,
     observationCount: 1,
     createdAt: now,
   };
@@ -173,13 +205,112 @@ function computeFrequency(signals: Signal[]): number {
   return Math.min(100, Math.round((signals.length / 20) * 100));
 }
 
-function describeProblem(canonical: string, signals: Signal[]): string {
-  // Toma el snippet más representativo (el más largo entre los de fricción).
-  const snippet = signals
+/**
+ * FASE-3-QUALITY §3.5 — concrete problem description.
+ *
+ * Structure:
+ *   WHO: <segment> (or "segmento desconocido" when none inferred)
+ *   WHAT: <pain phrase extracted from snippets>
+ *   Quote: "<excerpt from top evidence signal>"
+ *
+ * The pain phrase is derived by extracting the most informative sentence
+ * from the top evidence signal — i.e. the longest signal whose snippet
+ * matches a friction pattern. We no longer use the template
+ * `Recurring friction observed around "X"` because it carries zero
+ * actionable information.
+ *
+ * The `segmentUnknown` flag is set when no segment could be inferred
+ * from the evidence — in that case the description explicitly says so,
+ * which propagates the uncertainty downstream rather than hiding it.
+ */
+function describeProblem(
+  canonical: string,
+  signals: Signal[],
+  segmentsAffected: string[],
+  segmentUnknown: boolean,
+): string {
+  // Pick the top evidence signal: longest snippet among friction matches.
+  const topSignal = signals
     .slice()
-    .sort((a, b) => (b.rawSnippet?.length ?? 0) - (a.rawSnippet?.length ?? 0))[0]?.rawSnippet ?? '';
-  const excerpt = snippet.slice(0, 200).trim();
-  return `Recurring friction observed around "${canonical}". Representative signal: "${excerpt}..."`;
+    .sort((a, b) => (b.rawSnippet?.length ?? 0) - (a.rawSnippet?.length ?? 0))[0];
+  const snippet = topSignal?.rawSnippet ?? '';
+  const quote = excerpt(snippet, 180);
+
+  // WHAT: derive a short pain phrase from the snippet. We try to extract
+  // the clause that contains the friction keyword (e.g. "I lost two
+  // reservations last week" rather than the whole 300-char sentence).
+  const painPhrase = extractPainPhrase(snippet) ?? `fricción recurrente en ${canonical}`;
+
+  // WHO: segment label (Spanish, since CHISMOSO targets Spanish-speaking
+  // LATAM operators primarily).
+  const whoLabel = segmentUnknown
+    ? 'segmento desconocido'
+    : segmentsAffected.slice(0, 3).map(humanizeSegment).join(', ');
+
+  return [
+    `QUIÉN: ${whoLabel}.`,
+    `QUÉ: ${painPhrase}.`,
+    `Evidencia: "${quote}"`,
+  ].join(' ');
+}
+
+/**
+ * Extract a short pain phrase from a snippet by finding the clause that
+ * contains the first friction-pattern match. Falls back to the first
+ * ~120 chars of the snippet when no pattern is found.
+ */
+function extractPainPhrase(snippet: string): string | undefined {
+  if (!snippet) return undefined;
+  const t = snippet.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Find the first friction pattern match and grab the surrounding clause
+  // (a window of ~80 chars centered on the match, clamped to the snippet).
+  for (const p of FRICTION_PATTERNS) {
+    const m = t.match(p);
+    if (m && m.index !== undefined) {
+      const start = Math.max(0, m.index - 30);
+      const end = Math.min(snippet.length, m.index + m[0].length + 80);
+      const clause = snippet.slice(start, end).trim();
+      // Trim to the first sentence-ish boundary.
+      const sentenceEnd = clause.search(/[.!?]/);
+      const phrase = sentenceEnd > 0 ? clause.slice(0, sentenceEnd).trim() : clause;
+      return phrase.length > 0 ? phrase : undefined;
+    }
+  }
+  // No friction pattern matched — use the first ~120 chars as the phrase.
+  return snippet.slice(0, 120).trim() || undefined;
+}
+
+function excerpt(snippet: string, max: number): string {
+  if (!snippet) return '';
+  const trimmed = snippet.trim();
+  if (trimmed.length <= max) return trimmed;
+  // Try to break on a word boundary near `max`.
+  const slice = trimmed.slice(0, max);
+  const lastSpace = slice.lastIndexOf(' ');
+  const cut = lastSpace > max * 0.6 ? lastSpace : max;
+  return trimmed.slice(0, cut).trim() + '…';
+}
+
+/**
+ * Convert a raw segment token like "small_business" or "pyme" into a
+ * human-readable Spanish label for the problem description.
+ */
+function humanizeSegment(s: string): string {
+  const norm = s.toLowerCase().trim();
+  const MAP: Record<string, string> = {
+    small_business: 'pequeñas empresas',
+    restaurant: 'restaurantes',
+    restaurante: 'restaurantes',
+    retail: 'comercios minoristas',
+    startup: 'startups',
+    freelancer: 'freelancers',
+    pyme: 'PYMEs',
+    comercio: 'comercios',
+    empresa: 'empresas',
+    tienda: 'tiendas',
+    cafeteria: 'cafeterías',
+  };
+  return MAP[norm] ?? norm;
 }
 
 function inferSegments(signals: Signal[]): string[] {

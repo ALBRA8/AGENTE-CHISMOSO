@@ -12,6 +12,19 @@
  *   = Growth + Persistence + CrossSource + Recency + Velocity - Noise
  *
  * Los pesos están en TREND_WEIGHTS y son ajustables sin tocar lógica.
+ *
+ * FASE-3-QUALITY §3.3 — real publication dates:
+ *   - We use `signal.observedAt` (publication date) instead of
+ *     `signal.timestamp` (capture time) for all recency/growth/velocity
+ *     calculations. observedAt reflects WHEN the event happened in the
+ *     source, not WHEN CHISMOSO scraped it.
+ *   - When there's no historical baseline (first observation of a topic),
+ *     growth used to default to 1.0 — making every trend look like 100%
+ *     growth and biasing the score upward. Now we derive growth from the
+ *     date distribution of the signals themselves: the share of signals
+ *     published in the most recent 14 days vs the previous 14 days.
+ *   - Signals older than 90 days receive a relevance decay (linear,
+ *     from 0.1 just past the threshold up to 0.4 at 1 year).
  */
 
 import type { Evidence, Signal, Trend, TrendDirection, TrendState } from '../models.js';
@@ -27,6 +40,9 @@ export const TREND_WEIGHTS = {
   velocity: 0.15,
 } as const;
 
+/** Days before a signal's relevance starts decaying (FASE-3-QUALITY §3.3). */
+export const RELEVANCE_DECAY_DAYS = 90;
+
 export interface TrendInput {
   topic: string;
   canonical: string;
@@ -37,6 +53,79 @@ export interface TrendInput {
 
 export interface TrendResult {
   trend: Trend;
+}
+
+/**
+ * Resolve a signal's publication date as a millis epoch. Falls back to
+ * `timestamp` (capture time) when `observedAt` is missing or unparsable.
+ */
+function publicationMillis(s: Signal): number {
+  const obs = s.observedAt ? Date.parse(s.observedAt) : NaN;
+  if (!Number.isNaN(obs)) return obs;
+  const ts = Date.parse(s.timestamp);
+  return Number.isNaN(ts) ? Date.now() : ts;
+}
+
+/**
+ * FASE-3-QUALITY §3.3 — growth from date distribution.
+ *
+ * When we have no historical baseline (historicalSignals is empty/short),
+ * the previous logic returned growth=1.0 unconditionally — making every
+ * cluster look like 100% growth. That inflated trend scores for brand
+ * new topics.
+ *
+ * New approach: compute growth from the publication date distribution of
+ * the CURRENT signals themselves.
+ *   - recent   = signals published in the last 14 days
+ *   - previous = signals published in days 14..28
+ *   - growth   = recent / max(1, previous)
+ *
+ * When `previous` is 0, we cap growth at 1.0 (not 2.0) because we have
+ * no real evidence of acceleration — we just don't have prior data.
+ *
+ * The return value is still in [0, 2] for compatibility with the existing
+ * scoring weights, but the typical case for a new topic with mostly-recent
+ * signals is now ~1.0 (flat) rather than 2.0 (capped up).
+ */
+function growthFromDateDistribution(signals: Signal[]): number {
+  if (signals.length === 0) return 0;
+  const now = Date.now();
+  const dayMs = 24 * 3600 * 1000;
+  const recentCutoff = now - 14 * dayMs;
+  const previousCutoff = now - 28 * dayMs;
+  let recent = 0;
+  let previous = 0;
+  for (const s of signals) {
+    const t = publicationMillis(s);
+    if (t >= recentCutoff) recent++;
+    else if (t >= previousCutoff) previous++;
+  }
+  if (previous === 0) {
+    // No prior-window data. If recent is also 0, growth is flat. Otherwise
+    // we're seeing a real new burst — but we still cap at 1.0 because we
+    // can't prove acceleration without a comparison.
+    return recent > 0 ? 1.0 : 0.5;
+  }
+  return Math.min(2.0, recent / previous);
+}
+
+/**
+ * Relevance decay for signals older than RELEVANCE_DECAY_DAYS.
+ *
+ * Linear decay from 0 (at the threshold) up to 0.4 (at 1 year past).
+ * Used as a small penalty on the recency component.
+ */
+function dateDecayPenalty(signals: Signal[]): number {
+  if (signals.length === 0) return 0;
+  const dayMs = 24 * 3600 * 1000;
+  let totalDecay = 0;
+  for (const s of signals) {
+    const ageDays = (Date.now() - publicationMillis(s)) / dayMs;
+    if (ageDays > RELEVANCE_DECAY_DAYS) {
+      totalDecay += Math.min(0.4, 0.1 + ((ageDays - RELEVANCE_DECAY_DAYS) / 365) * 0.3);
+    }
+  }
+  return totalDecay / signals.length;
 }
 
 /**
@@ -54,28 +143,34 @@ export function detectTrend(input: TrendInput): TrendResult {
   const sourceTypesCount = countDistinctSourceTypes(signals);
   const crossSource = crossSourceConfidence(signals);
 
-  // Growth: proporción de señales nuevas vs históricas en la última ventana.
-  // Si no hay históricos, growth = 1 (todo es nuevo), pero esto baja la
-  // confianza del estado (emerging vs established).
+  // Growth: proportion of NEW signals vs historical in the last window.
+  // FASE-3-QUALITY §3.3: when no historical baseline is available, derive
+  // growth from the date distribution of the current signals instead of
+  // unconditionally returning 1.0.
   let growth = 1.0;
   let persistence = 0;
   let velocity = 0;
   if (historicalSignals.length > 0) {
     const recent = signals.length;
     const past = historicalSignals.length;
-    growth = past === 0 ? 1.0 : Math.min(2.0, recent / Math.max(1, past));
+    growth = past === 0 ? growthFromDateDistribution(signals) : Math.min(2.0, recent / Math.max(1, past));
     persistence = Math.min(1.0, past / 10);
     velocity = Math.min(1.0, recent / Math.max(1, recent + past));
   } else {
-    // Sin historial: la persistencia es baja. Sólo crece si hay volumen actual.
+    // No history: derive growth from date distribution; persistence is low.
+    growth = growthFromDateDistribution(signals);
     persistence = Math.min(0.4, signals.length / 20);
     velocity = Math.min(0.6, signals.length / 10);
   }
 
   // Recency: cuán recientes son las señales (últimas 30 días = 1.0).
+  // FASE-3-QUALITY §3.3: use observedAt (publication date), not timestamp.
   const cutoffRecent = Date.now() - 30 * 24 * 3600 * 1000;
-  const recentCount = signals.filter((s) => new Date(s.timestamp).getTime() >= cutoffRecent).length;
-  const recency = signals.length === 0 ? 0 : recentCount / signals.length;
+  const recentCount = signals.filter((s) => publicationMillis(s) >= cutoffRecent).length;
+  let recency = signals.length === 0 ? 0 : recentCount / signals.length;
+
+  // FASE-3-QUALITY §3.3 — apply date decay penalty to recency.
+  recency = Math.max(0, recency - dateDecayPenalty(signals));
 
   // Noise: penaliza señales con snippets muy cortos o duplicados.
   const noise = signals.length === 0
@@ -112,6 +207,13 @@ export function detectTrend(input: TrendInput): TrendResult {
   // defaults to 1.0 — flat is the honest answer in that case.
   const direction: TrendDirection = computeDirection(growth);
 
+  // firstSeen / lastSeen: use publication date (observedAt) when
+  // available so the trend reflects WHEN the underlying events happened,
+  // not when CHISMOSO scraped them.
+  const pubMillis = signals.map(publicationMillis).sort((a, b) => a - b);
+  const firstSeen = pubMillis.length > 0 ? new Date(pubMillis[0]).toISOString() : now;
+  const lastSeen = pubMillis.length > 0 ? new Date(pubMillis[pubMillis.length - 1]).toISOString() : now;
+
   const trend: Trend = {
     id: generateId('trend'),
     topic: input.topic,
@@ -123,8 +225,8 @@ export function detectTrend(input: TrendInput): TrendResult {
     signalsCount: signals.length,
     evidence: evidence.slice(0, 30),
     signals: signals.slice(0, 30),
-    firstSeen: signals.length > 0 ? signals.map((s) => s.timestamp).sort()[0] : now,
-    lastSeen: signals.length > 0 ? signals.map((s) => s.timestamp).sort().reverse()[0] : now,
+    firstSeen,
+    lastSeen,
     observationCount: 1 + (historicalSignals.length > 0 ? 1 : 0),
     growth: round2(growth),
     velocity: round2(velocity),
@@ -151,6 +253,8 @@ export function detectTrend(input: TrendInput): TrendResult {
     sources: sourcesCount,
     sourceTypes: sourceTypesCount,
     signals: signals.length,
+    growth: trend.growth,
+    hasHistorical: historicalSignals.length > 0,
   });
 
   return { trend };

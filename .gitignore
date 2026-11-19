@@ -13,6 +13,16 @@ node_modules
 .provider-settings.json
 .signals-settings.json
 
+# local databases (do NOT commit SQLite files — they hold per-instance state)
+db/custom.db
+db/*.db
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm
+
+# local worklog (developer scratch file, not project documentation)
+worklog.md
+
 # testing
 /coverage
 
@@ -58,7 +68,8 @@ server.log
 /skills/
 
 # CHISMOSO data (DBs, generated reports, screenshots)
-/chismoso/data/
+/chismoso/data/*
+!/chismoso/data/sample-docs/
 /chismoso/node_modules/
 /chismoso/dist/
 /download/

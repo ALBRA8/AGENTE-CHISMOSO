@@ -5,7 +5,7 @@
 | Atributo       | Valor                                                     |
 |----------------|-----------------------------------------------------------|
 | **Versión**    | 1.0.0                                                     |
-| **Estado**     | Production-ready (V1) — 41/41 tests pasan                 |
+| **Estado**     | Production-ready (V1) — 410/410 unit tests pasan (+ E2E con providers reales) |
 | **Runtime**    | Node.js ≥ 20 LTS (recomendado 20 / 22 LTS; probado hasta Node 24) |
 | **Lenguaje**   | TypeScript 5.6 (ESM)                                     |
 | **Licencia**   | MIT                                                       |
@@ -453,7 +453,7 @@ Una oportunidad con `score < 35` o `confidence < 0.30` se marca como `weak` y **
 ## Testing
 
 ```bash
-npm test           # Vitest: 39 tests unitarios + 2 E2E = 41 total
+npm test           # Vitest: 410 tests unitarios (excluye E2E)
 npm run test:e2e   # Solo tests end-to-end (investigación canónica con datos reales)
 npm run test:watch # Mode watch para desarrollo
 npm run lint       # tsc --noEmit (verificación de tipos sin emitir)
@@ -762,7 +762,7 @@ SOFTWARE.
 ## Estado del proyecto
 
 - ✅ V1.0 completo y funcional end-to-end.
-- ✅ 41/41 tests pasan (39 unit + 2 E2E con datos reales).
+- ✅ 410/410 tests unitarios pasan (suite regular) + 2 tests E2E con providers reales.
 - ✅ Pipeline completo: OBJECTIVE → PLAN (LLM con fallback) → COLLECT (providers reales) → NORMALIZE → DEDUP → CLUSTER → TREND DETECTION → PROBLEM DETECTION → CROSS-SOURCE CONFIRMATION → OPPORTUNITY ENGINE → SCORING → REPORT (markdown + JSON) → STORE (SQLite) → INTEROPERABILITY (`suggestedNextAgent=AGENTE-LEADS`).
 - ✅ Cumple la Definition of Done: arquitectura separada, sin capacidades ficticias, evidencia trazable, memoria funcional (`topic_observations`), autonomía (una instrucción de alto nivel ejecuta todo el pipeline), retries/fallbacks/timeouts normalizados, tests unit + E2E.
 

@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.db
 *.db-journal
-data/
+/data/*
+!/data/sample-docs/
 .env.local
 coverage/

@@ -178,6 +178,7 @@ export class Orchestrator {
       const ctx: ToolContext = {
         investigationId,
         geography,
+        objective: input.objective,
         repositories: this.cfg.repositories,
         providerRegistry: this.cfg.providerRegistry,
       };
@@ -267,8 +268,28 @@ export class Orchestrator {
       // ----------------------------------------------------------------------
       // STEP 5: ANALYZE (cluster + trend + problem + opportunity)
       // ----------------------------------------------------------------------
-      const signals = this.cfg.repositories.signals.findByInvestigation(investigationId);
+      // FASE-3-QUALITY §3.1 — exclude signals flagged `irrelevant` by the
+      // relevance scorer from clustering / trend / problem / opportunity
+      // analysis. They're still persisted (so `chismoso signals list` shows
+      // everything that came back from the providers), but they don't
+      // contribute to trend scores, opportunity generation, etc.
+      const allSignals = this.cfg.repositories.signals.findByInvestigation(investigationId);
       const evidence = this.cfg.repositories.evidence.findByInvestigation(investigationId);
+      const irrelevantCount = allSignals.filter(
+        (s) => (s.metadata?.relevance as { irrelevant?: boolean } | undefined)?.irrelevant === true,
+      ).length;
+      const signals = allSignals.filter(
+        (s) => (s.metadata?.relevance as { irrelevant?: boolean } | undefined)?.irrelevant !== true,
+      );
+      if (irrelevantCount > 0) {
+        investigation.errors.push(`relevance_discarded:${irrelevantCount}`);
+        logger.info('Relevance filter applied', {
+          investigationId,
+          total: allSignals.length,
+          relevant: signals.length,
+          discarded: irrelevantCount,
+        });
+      }
       investigation.signalsFound = signals.length;
       investigation.evidenceFound = evidence.length;
 
@@ -399,7 +420,15 @@ export class Orchestrator {
       // ----------------------------------------------------------------------
       // STEP 6: OPPORTUNITY ENGINE
       // ----------------------------------------------------------------------
+      // FASE-3-QUALITY §3.7 — every opportunity is validated against the
+      // OpportunityV1 zod schema before being persisted. Invalid ones get
+      // logged + dropped so AGENTE-LEADS never receives a malformed payload.
+      // The V1 payload (with niche, valueProposition, whyNow, risks,
+      // leadSearchHints, evidence) is the canonical contract that the mesh
+      // webhook sends downstream.
       const opportunities: Opportunity[] = [];
+      const v1Payloads: Array<{ id: string; v1: import('../schema/opportunity-v1.js').OpportunityV1 }> = [];
+      let droppedForSchema = 0;
       for (const trend of trends) {
         const matchingProblem = problems.find((p) => p.topic === trend.topic);
         // Usamos las señales/evidencia ya agrupadas en el trend (vienen del
@@ -411,56 +440,78 @@ export class Orchestrator {
         if (!matchingProblem && trend.state !== 'STRONG_TREND' && trend.state !== 'ESTABLISHED_TREND') {
           continue;
         }
-        const { opportunity, weak } = generateOpportunity({
+        const { opportunity, weak, v1, v1Error } = generateOpportunity({
           trend,
           problem: matchingProblem,
           signals: oppSignals,
           evidence: oppEvidence,
           geography,
+          objective: input.objective,
         });
-        if (!weak) {
-          opportunities.push(opportunity);
-          this.cfg.repositories.opportunities.insert(opportunity, investigationId);
-          // ----------------------------------------------------------------
-          // FICHA.md generation (Task IMP-CLONA-1, ClonaKit pattern).
-          //
-          // After persisting the Opportunity, synthesise a ClonaKit-style
-          // FICHA spec and write it to disk under
-          // <dashboard_root>/download/chismoso/fichas/ficha-<opp_id>.md
-          //
-          // The FICHA is the INTERFACE between discovery (CHISMOSO) and
-          // construction (a future AGENTE-MVP, a human developer, or an
-          // AI like Cursor). It describes WHAT to build, not HOW.
-          //
-          // Best-effort: any failure here is logged but does NOT fail
-          // the investigation — the FICHA is a downstream artefact, not
-          // a primary deliverable.
-          // ----------------------------------------------------------------
-          try {
-            const ficha = await buildFicha(
-              {
-                opportunity,
-                trend,
-                problem: matchingProblem,
-                evidence: oppEvidence,
-                investigationId,
-              },
-              this.cfg.llm,
-            );
-            const markdown = renderFichaMarkdown(ficha);
-            mkdirSync(FICHAS_DIR, { recursive: true });
-            const fichaPath = path.join(FICHAS_DIR, `ficha-${opportunity.id}.md`);
-            writeFileSync(fichaPath, markdown, 'utf8');
-            logger.info('FICHA generated', { opportunityId: opportunity.id, fichaPath });
-          } catch (fichaErr: any) {
-            logger.warn('FICHA generation failed', {
-              opportunityId: opportunity.id,
-              err: fichaErr?.message ?? String(fichaErr),
-            });
-          }
-        } else {
+        if (weak) {
           logger.info('Skipping weak opportunity', { title: opportunity.title, score: opportunity.score });
+          continue;
         }
+        if (!v1) {
+          // FASE-3-QUALITY §3.7 — schema validation failed. Drop + log.
+          droppedForSchema++;
+          investigation.errors.push(
+            `opportunity_v1_invalid:${opportunity.id}:${(v1Error ?? 'unknown').slice(0, 200)}`,
+          );
+          logger.warn('Opportunity dropped (V1 schema invalid)', {
+            investigationId,
+            opportunityId: opportunity.id,
+            title: opportunity.title,
+            err: v1Error,
+          });
+          continue;
+        }
+        opportunities.push(opportunity);
+        v1Payloads.push({ id: opportunity.id, v1 });
+        this.cfg.repositories.opportunities.insert(opportunity, investigationId);
+        // ----------------------------------------------------------------
+        // FICHA.md generation (Task IMP-CLONA-1, ClonaKit pattern).
+        //
+        // After persisting the Opportunity, synthesise a ClonaKit-style
+        // FICHA spec and write it to disk under
+        // <dashboard_root>/download/chismoso/fichas/ficha-<opp_id>.md
+        //
+        // The FICHA is the INTERFACE between discovery (CHISMOSO) and
+        // construction (a future AGENTE-MVP, a human developer, or an
+        // AI like Cursor). It describes WHAT to build, not HOW.
+        //
+        // Best-effort: any failure here is logged but does NOT fail
+        // the investigation — the FICHA is a downstream artefact, not
+        // a primary deliverable.
+        // ----------------------------------------------------------------
+        try {
+          const ficha = await buildFicha(
+            {
+              opportunity,
+              trend,
+              problem: matchingProblem,
+              evidence: oppEvidence,
+              investigationId,
+            },
+            this.cfg.llm,
+          );
+          const markdown = renderFichaMarkdown(ficha);
+          mkdirSync(FICHAS_DIR, { recursive: true });
+          const fichaPath = path.join(FICHAS_DIR, `ficha-${opportunity.id}.md`);
+          writeFileSync(fichaPath, markdown, 'utf8');
+          logger.info('FICHA generated', { opportunityId: opportunity.id, fichaPath });
+        } catch (fichaErr: any) {
+          logger.warn('FICHA generation failed', {
+            opportunityId: opportunity.id,
+            err: fichaErr?.message ?? String(fichaErr),
+          });
+        }
+      }
+      if (droppedForSchema > 0) {
+        logger.warn('Opportunities dropped for V1 schema violations', {
+          investigationId,
+          droppedForSchema,
+        });
       }
 
       // ----------------------------------------------------------------------

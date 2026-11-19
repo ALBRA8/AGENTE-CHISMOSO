@@ -3,6 +3,7 @@
  */
 
 export * from './normalizer.js';
+export * from './relevance.js';
 export * from './clustering.js';
 export * from './cross-source.js';
 export * from './trends.js';

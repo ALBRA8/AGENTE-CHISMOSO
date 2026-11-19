@@ -1,0 +1,20 @@
+Restaurant automation in Colombia is transforming how small and mid-sized
+eateries serve customers. Over the last three years, Bogota, Medellin and
+Cali have seen rapid adoption of cloud POS systems, WhatsApp-based
+reservation bots, and contactless payments. Restaurant automation enables
+operators to cut wait times, reduce errors at the kitchen display, and free
+staff for hospitality work.
+
+Despite the lift, Colombia still lags regional peers in adoption. Market
+fragmentation across departments and a heavy reliance on WhatsApp Business
+as a default ordering channel continue to limit scale. Independent operators
+in tier-2 cities such as Pereira, Manizales and Bucaramanga still rely on
+pen-and-paper order taking and phone-call reservations.
+
+The strongest growth signal is in integrated POS + WhatsApp bundles that
+replace manual call-taking with a templated chat flow. Restaurants that
+deploy these bundles report fewer no-shows, faster table turns, and higher
+average ticket sizes. The opportunity for founders is to package the
+integration as a turnkey monthly subscription priced in Colombian pesos,
+removing the capex barrier that has historically kept small eateries on
+paper.

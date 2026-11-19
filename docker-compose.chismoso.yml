@@ -1,0 +1,128 @@
+# =============================================================================
+# CHISMOSO V1.0 — docker-compose.chismoso.yml (single-service stack)
+#
+# A self-contained stack that brings up ONLY CHISMOSO — the dashboard
+# (Next.js 16 standalone), Redis (cache + rate-limit), and Caddy (TLS
+# reverse proxy). No external Postgres / monitoring / scheduler / backup
+# sidecars — those live in docker-compose.yml / docker-compose.prod.yml /
+# ops/docker-compose.monitoring.yml and are layered on top of this file
+# when a full production deploy is needed.
+#
+# Usage:
+#   cp .env.example .env
+#   # fill in at least one search provider key + one LLM provider key
+#   docker compose -f docker-compose.chismoso.yml up -d --build
+#
+# Health checks:
+#   curl http://127.0.0.1:3000/api/health    # liveness probe (200 OK)
+#   curl http://127.0.0.1:3000/api/version   # build + version metadata
+#
+# Tear down (preserves volumes):
+#   docker compose -f docker-compose.chismoso.yml down
+#
+# Tear down (wipes the SQLite DB + reports + Redis data):
+#   docker compose -f docker-compose.chismoso.yml down -v
+# =============================================================================
+
+name: chismoso-single
+
+volumes:
+  redis_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  chismoso_data:
+    driver: local
+  chismoso_reports:
+    driver: local
+
+networks:
+  chismoso_net:
+    driver: bridge
+
+services:
+  # ---------------------------------------------------------------------------
+  # app — Next.js 16 standalone (the dashboard + REST API).
+  # Built from the repo's Dockerfile. Listens on 3000 internally; Caddy
+  # terminates TLS on 80/443 and forwards to it. The 3000 port is bound
+  # to 127.0.0.1 only — Caddy remains the sole public edge.
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chismoso:local
+    container_name: chismoso-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - CHISMOSO_DB_PATH=/data/chismoso.db
+      - CHISMOSO_OUTPUT_DIR=/data/reports
+    ports:
+      # Loopback only — Caddy is the public edge.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - chismoso_data:/data
+      - chismoso_reports:/data/reports
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - chismoso_net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # redis — Redis 7 alpine with AOF persistence.
+  # Used for distributed rate-limit + cache. AOF enabled so a restart
+  # doesn't lose rate-limit windows.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: chismoso-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - chismoso_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # caddy — Reverse proxy + automatic Let's Encrypt HTTPS.
+  # Ports 80 (ACME http-01 + http→https redirect) + 443 (app). Caddyfile
+  # is read-only mounted from the repo root. Set CHISMOSO_DOMAIN to your
+  # real domain to get automatic TLS certs in production.
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: chismoso-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - CHISMOSO_DOMAIN=${CHISMOSO_DOMAIN:-localhost}
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - chismoso_net

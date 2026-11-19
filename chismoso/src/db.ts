@@ -181,7 +181,14 @@ CREATE TABLE IF NOT EXISTS opportunities (
   trend_ref         TEXT,
   evidence_json     TEXT,
   created_at        TEXT NOT NULL,
-  investigation_id  TEXT
+  investigation_id  TEXT,
+  -- FASE-3-QUALITY §3.6 — concrete + complete opportunity fields.
+  -- Carries niche, valueProposition, whyNow, risks, leadSearchHints,
+  -- objective so they survive a DB round-trip and feed the mesh webhook
+  -- payload builder (toOpportunityV1() in mesh/auto-publish.ts).
+  -- Nullable for backward compatibility with opportunities persisted
+  -- before FASE-3-QUALITY was applied.
+  metadata_json     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_opportunities_score ON opportunities(score DESC);
 
@@ -584,6 +591,11 @@ function applyV5ColumnExtensions(db: DB): void {
 
   // §30 — Investigation: execution_id (back-ref to execution_traces.id)
   addColumnIfMissing(db, 'investigations', 'execution_id', 'TEXT');
+
+  // FASE-3-QUALITY §3.6 — Opportunity: metadata_json (carries niche,
+  // valueProposition, whyNow, risks, leadSearchHints, objective).
+  // Idempotent — older DB files gain the column on the next CLI run.
+  addColumnIfMissing(db, 'opportunities', 'metadata_json', 'TEXT');
 }
 
 export class ChismosoDB {

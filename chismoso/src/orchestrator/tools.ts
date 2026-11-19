@@ -82,6 +82,12 @@ export interface RetryPolicy {
 export interface ToolContext {
   investigationId: string;
   geography: string;
+  /**
+   * Original investigation objective (FASE-3-QUALITY §3.1). When set,
+   * every tool that produces signals forwards it to the normalizer so
+   * each signal is relevance-scored against the objective.
+   */
+  objective?: string;
   repositories: Repositories;
   providerRegistry: ProviderRegistry;
 }
@@ -322,6 +328,7 @@ export const searchWebTool: ToolDefinition<SearchWebArgs, SearchWebResponse> = {
       topic: args.query,
       geography: args.geography ?? ctx.geography,
       investigationId: ctx.investigationId,
+      objective: ctx.objective,
     };
     const normalized = res.items.map((it) => normalizeRawItem(it, normCtx));
     let signals = normalized.map((n) => n.signal);
@@ -332,6 +339,23 @@ export const searchWebTool: ToolDefinition<SearchWebArgs, SearchWebResponse> = {
     const duplicates = beforeDedup - signals.length;
     ctx.repositories.signals.insertMany(signals, ctx.investigationId);
     for (const e of evidence) ctx.repositories.evidence.insert(e, ctx.investigationId);
+
+    // FASE-3-QUALITY §3.1 — signals flagged `irrelevant` by the relevance
+    // scorer are still persisted (so they appear in `chismoso signals list`
+    // and `findByInvestigation`) but carry `metadata.relevance.irrelevant=true`.
+    // The orchestrator excludes them from clustering/trend/opportunity in
+    // the STEP 5 ANALYZE phase. The discarded count is logged here for
+    // telemetry (the orchestrator also re-counts and records it).
+    const irrelevantCount = signals.filter((s) =>
+      (s.metadata?.relevance as { irrelevant?: boolean } | undefined)?.irrelevant === true,
+    ).length;
+    if (irrelevantCount > 0) {
+      logger.info('search_web relevance filter', {
+        investigationId: ctx.investigationId,
+        kept: signals.length - irrelevantCount,
+        discarded: irrelevantCount,
+      });
+    }
 
     // §10 Provider Quality — record this call's outcome.
     try {
@@ -437,6 +461,7 @@ export const searchCommunityTool: ToolDefinition<SearchCommunityArgs, SearchComm
       topic: args.query,
       geography: ctx.geography,
       investigationId: ctx.investigationId,
+      objective: ctx.objective,
     };
     const normalized = res.items.map((it) => normalizeRawItem(it, normCtx));
     let signals = normalized.map((n) => n.signal);
@@ -601,6 +626,7 @@ export const deepenContentTool: ToolDefinition<DeepenContentArgs, DeepenContentR
       topic: args.topic,
       geography: ctx.geography,
       investigationId: ctx.investigationId,
+      objective: ctx.objective,
     };
     const normalized = res.items.map((it) => normalizeRawItem(it, normCtx));
     let signals = normalized.map((n) => n.signal);
@@ -1255,6 +1281,7 @@ export const ingestDocumentTool: ToolDefinition<
       topic,
       geography,
       investigationId: ctx.investigationId,
+      objective: ctx.objective,
       provenance: 'document_ingest',
     };
     const normalized = rawItems.map((it) => normalizeRawItem(it, normCtx));

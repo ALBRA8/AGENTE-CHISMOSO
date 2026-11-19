@@ -13,6 +13,7 @@ import type { Evidence, Signal, SignalType, SourceType, TruthLevel } from '../mo
 import { generateId, nowISO, SignalType as ST, TruthLevel as TL } from '../models.js';
 import { detectTechMentions } from './capability-mapping.js';
 import { enrichSignalWithTech } from './tech-enricher.js';
+import { applyRelevance } from './relevance.js';
 
 // ---------------------------------------------------------------------------
 // DETECCIÓN DE TIPO DE SEÑAL (heurística documentada)
@@ -142,6 +143,15 @@ export interface NormalizeContext {
   keywordHint?: string;
   investigationId?: string;
   /**
+   * Original high-level investigation objective (free-text). When provided,
+   * each normalized signal is scored for relevance against this objective
+   * via `applyRelevance()` (FASE-3-QUALITY §3.1). Signals below the
+   * relevance threshold are flagged `irrelevant` in
+   * `signal.metadata.relevance` — downstream consumers (clustering,
+   * trends, opportunities) are expected to exclude them.
+   */
+  objective?: string;
+  /**
    * How this evidence was obtained — drives Evidence.provenance (§8).
    * Defaults to the sourceType if not specified.
    * Examples: 'web_search' | 'reddit_communities' | 'mesh_external' | 'deepen_content'.
@@ -270,6 +280,22 @@ export function normalizeRawItem(item: RawItem, ctx: NormalizeContext): Normaliz
   let finalSignal: Signal = signal;
   if (ctx.clonakit_enrichment !== false) {
     finalSignal = enrichSignalWithTech(signal);
+  }
+
+  // FASE-3-QUALITY §3.1 — score each normalized signal against the
+  // investigation objective + geography. When `ctx.objective` is
+  // provided, the verdict is attached to `finalSignal.metadata.relevance`
+  // (score, irrelevant flag, reason). Downstream consumers (clustering,
+  // trends, opportunities) MUST exclude signals whose
+  // `metadata.relevance.irrelevant === true`.
+  //
+  // When `ctx.objective` is omitted (legacy callers, tests), no relevance
+  // scoring is performed — the signal is treated as relevant by default.
+  if (ctx.objective) {
+    finalSignal = applyRelevance(finalSignal, {
+      objective: ctx.objective,
+      geography: ctx.geography,
+    });
   }
 
   const evidence: Evidence = {

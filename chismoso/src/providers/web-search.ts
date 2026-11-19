@@ -22,6 +22,82 @@ import { ProviderHealth, SourceType } from '../models.js';
  */
 type ZAIInstance = any;
 
+// FASE-3-QUALITY §3.2 — Serper gl/hl params per geography.
+//
+// Serper.dev accepts `gl` (country code, lowercase ISO-3166-1 alpha-2) and
+// `hl` (language code, e.g. "es" or "en"). When the investigation targets a
+// specific country, we attach both so Google returns local results and
+// preferentially local-language pages.
+//
+// We also append the country's Spanish name to the query string (e.g.
+// "restaurantes colombia") because Serper's `gl` only biases results, it
+// doesn't restrict them — adding the country name explicitly makes the
+// geographic intent unambiguous to the search engine.
+const GEO_SERPER_PARAMS: Record<string, { gl: string; hl: string; countryName: string }> = {
+  colombia: { gl: 'co', hl: 'es', countryName: 'Colombia' },
+  peru: { gl: 'pe', hl: 'es', countryName: 'Perú' },
+  mexico: { gl: 'mx', hl: 'es', countryName: 'México' },
+  argentina: { gl: 'ar', hl: 'es', countryName: 'Argentina' },
+  chile: { gl: 'cl', hl: 'es', countryName: 'Chile' },
+  espana: { gl: 'es', hl: 'es', countryName: 'España' },
+  spain: { gl: 'es', hl: 'es', countryName: 'España' },
+  'estados unidos': { gl: 'us', hl: 'en', countryName: 'United States' },
+  usa: { gl: 'us', hl: 'en', countryName: 'United States' },
+  brasil: { gl: 'br', hl: 'pt', countryName: 'Brasil' },
+  brazil: { gl: 'br', hl: 'pt', countryName: 'Brasil' },
+};
+
+function normalizeGeo(geography?: string): string {
+  return (geography ?? '').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function serperParamsFor(geography?: string): { gl?: string; hl?: string; countryName?: string } {
+  const g = normalizeGeo(geography);
+  if (!g || g === 'global') return {};
+  if (GEO_SERPER_PARAMS[g]) return GEO_SERPER_PARAMS[g];
+  // Fall back: try matching on the first word (handles "Perú", "Colombia,").
+  const first = g.split(/\s+/)[0];
+  if (first && GEO_SERPER_PARAMS[first]) return GEO_SERPER_PARAMS[first];
+  return {};
+}
+
+/**
+ * Builds the Serper query string for a given geography. If the geography
+ * has a known country name (e.g. "Colombia") and the user's query doesn't
+ * already mention it, we append it so the search engine gets the
+ * geographic intent unambiguously.
+ */
+function enrichQueryWithGeo(query: string, geography?: string): string {
+  const { countryName } = serperParamsFor(geography);
+  if (!countryName) return query;
+  const q = query.trim();
+  // Case-insensitive check on the normalised query.
+  const qNorm = q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const cNorm = countryName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (qNorm.includes(cNorm)) return q;
+  return `${q} ${countryName}`;
+}
+
+/**
+ * FASE-3-QUALITY §3.2 — small relevance boost for local TLDs.
+ *
+ * The Serper API returns results in `position` order (1..N). When the
+ * geography has a known TLD (e.g. ".co" for Colombia), we promote results
+ * whose `link` ends in that TLD by lowering their nominal `position` so
+ * they appear earlier in our rank-ordered metadata. The effect is small
+ * (a +5 raw confidence bump in the normalizer) — this is a *boost*, not
+ * a hard filter.
+ */
+function localTldBoostFor(geography?: string): string | undefined {
+  const g = normalizeGeo(geography);
+  if (!g || g === 'global') return undefined;
+  if (GEO_SERPER_PARAMS[g]) {
+    const gl = GEO_SERPER_PARAMS[g].gl;
+    return `.${gl}`;
+  }
+  return undefined;
+}
+
 function getSearchConfig(): { serperKey?: string; tavilyKey?: string; braveKey?: string } {
   const serperKey = process.env.SERPER_API_KEY;
   const tavilyKey = process.env.TAVILY_API_KEY;
@@ -113,32 +189,73 @@ export class WebSearchProvider implements IProvider {
     const t0 = Date.now();
     const num = Math.min(q.num ?? 10, 20);
 
+    // FASE-3-QUALITY §3.2 — enrich the query with the target country name
+    // when a geography is supplied (e.g. "restaurantes" + "Colombia" →
+    // "restaurantes Colombia"). The `gl`/`hl` Serper params are attached
+    // below when calling the Serper API.
+    const enrichedQuery = enrichQueryWithGeo(q.query, q.geography);
+    const serperParams = serperParamsFor(q.geography);
+    const tldBoost = localTldBoostFor(q.geography);
+
     // 1. Try Serper (Google Search) if key configured
     const cfg = getSearchConfig();
     if (cfg.serperKey) {
       try {
+        const serperBody: Record<string, unknown> = { q: enrichedQuery, num };
+        if (serperParams.gl) serperBody.gl = serperParams.gl;
+        if (serperParams.hl) serperBody.hl = serperParams.hl;
         const res = await fetch('https://google.serper.dev/search', {
           method: 'POST',
           headers: {
             'X-API-KEY': cfg.serperKey,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ q: q.query, num }),
+          body: JSON.stringify(serperBody),
           signal: AbortSignal.timeout(15000),
         });
         if (res.ok) {
           const data: any = await res.json();
-          const items: RawItem[] = (data.organic || []).map((r: any) => ({
+          // FASE-3-QUALITY §3.2 — small boost for local TLDs: lower the
+          // stored `position` of results whose hostname ends in the local
+          // TLD (e.g. ".co" for Colombia). This bumps them in any
+          // downstream rank-based scoring without removing non-local
+          // results (we still keep them, just ranked after local ones).
+          const organic: any[] = data.organic || [];
+          // Compute a sort-stable rank: local-TLD results get -1000 offset
+          // (so they sort before non-local ones), preserving original order
+          // within each group via `position`.
+          const decorated = organic.map((r: any) => {
+            const host = (() => { try { return new URL(r.link ?? '').hostname; } catch { return ''; } })();
+            const isLocal = !!(tldBoost && host.endsWith(tldBoost));
+            return { r, isLocal, host, pos: r.position ?? 0 };
+          });
+          decorated.sort((a, b) => {
+            if (a.isLocal !== b.isLocal) return a.isLocal ? -1 : 1;
+            return a.pos - b.pos;
+          });
+          const items: RawItem[] = decorated.map(({ r, isLocal, host }, idx) => ({
             providerName: 'web_search',
             sourceType: SourceType.SEARCH_WEB,
             title: r.title ?? '',
             snippet: r.snippet ?? '',
             url: r.link ?? '',
-            hostName: (() => { try { return new URL(r.link).hostname; } catch { return ''; } })(),
+            hostName: host,
             date: r.date ?? '',
-            rawMetadata: { rank: r.position ?? 0 },
+            rawMetadata: {
+              rank: idx + 1,
+              serperPosition: r.position ?? 0,
+              localTldBoost: isLocal,
+              gl: serperParams.gl ?? null,
+              hl: serperParams.hl ?? null,
+            },
           }));
-          logger.info('WebSearchProvider (Serper) returned', { query: q.query, count: items.length });
+          logger.info('WebSearchProvider (Serper) returned', {
+            query: enrichedQuery,
+            gl: serperParams.gl,
+            hl: serperParams.hl,
+            count: items.length,
+            localTldHits: decorated.filter((d) => d.isLocal).length,
+          });
           return { providerName: 'web_search', items, durationMs: Date.now() - t0, query: q.query };
         }
       } catch (err: any) {

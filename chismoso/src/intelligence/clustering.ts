@@ -125,7 +125,141 @@ export function clusterSignals(signals: Signal[], threshold = 0.34): ClusterResu
     c.canonical = pickCanonical(c.canonical, freq);
   }
 
+  // FASE-3-QUALITY §3.4 — no duplicate trend names.
+  //
+  // After canonical refresh, two clusters may end up with the same single
+  // keyword (e.g. both clusters' most frequent token is "restaurantes").
+  // We rename duplicates by appending a discriminator: the second
+  // occurrence becomes "<topic>-2", the third "<topic>-3", etc. If the
+  // underlying cluster has a meaningful secondary token we use that to
+  // build a descriptive phrase (e.g. "restaurantes bogota" instead of
+  // "restaurantes-2"); the discriminator is the fallback when no second
+  // token is available.
+  //
+  // Also, we replace any single-word canonical with a short phrase when
+  // possible (e.g. "restaurantes" → "crecimiento en restaurantes" when
+  // we have enough signal context) so trends are descriptive phrases, not
+  // single words.
+  dedupCanonicalNames(clusters, clusterTokens);
+
   return { clusters, signalToCluster };
+}
+
+/**
+ * FASE-3-QUALITY §3.4 — ensure no two clusters share the same canonical
+ * name. Renames duplicates by:
+ *   1. Trying to derive a descriptive phrase from the cluster's
+ *      secondary tokens (e.g. "restaurantes" + "bogota" →
+ *      "restaurantes bogota").
+ *   2. ALWAYS appending a numeric discriminator (`-2`, `-3`, ...) when
+ *      the derived phrase collides with an existing name, so duplicates
+ *      are unambiguously renamed even when two clusters share the same
+ *      top tokens (e.g. both clusters' top-2 tokens are "restaurantes"
+ *      and "bogota" — the second one becomes "restaurantes bogota-2").
+ *
+ * Mutates `clusters` in place.
+ */
+function dedupCanonicalNames(
+  clusters: TopicCluster[],
+  clusterTokens: Map<string, Map<string, number>>,
+): void {
+  const seen = new Set<string>(); // canonical lowercase → existence
+  for (const c of clusters) {
+    const original = c.canonical;
+    const norm = original.toLowerCase().trim();
+    if (!seen.has(norm)) {
+      // First occurrence — but if it's a single word, try to expand it
+      // into a descriptive phrase using the cluster's secondary tokens.
+      const expanded = expandToPhrase(original, clusterTokens.get(c.id));
+      const expandedNorm = expanded.toLowerCase().trim();
+      if (seen.has(expandedNorm)) {
+        // The expansion collided with an existing name — fall through to
+        // the duplicate path.
+        const altName = deriveAlternativeName(original, clusterTokens.get(c.id), 2, seen);
+        c.canonical = altName;
+        seen.add(altName.toLowerCase().trim());
+      } else {
+        c.canonical = expanded;
+        seen.add(expandedNorm);
+      }
+      continue;
+    }
+    // Duplicate — derive an alternative name that doesn't collide with
+    // anything in `seen`.
+    const altName = deriveAlternativeName(original, clusterTokens.get(c.id), 2, seen);
+    c.canonical = altName;
+    seen.add(altName.toLowerCase().trim());
+  }
+}
+
+/**
+ * FASE-3-QUALITY §3.4 — expand a single-word canonical into a short
+ * descriptive phrase. Picks the top-2 most frequent tokens from the
+ * cluster's frequency map and joins them with the canonical.
+ *
+ * If the canonical is already a multi-word phrase (contains a space) or
+ * no secondary token is available, returns the canonical unchanged.
+ */
+function expandToPhrase(canonical: string, freq?: Map<string, number>): string {
+  if (!canonical) return canonical;
+  if (canonical.includes(' ')) return canonical;
+  if (!freq || freq.size === 0) return canonical;
+  // Find the most frequent token that is NOT the canonical itself.
+  const canonNorm = canonical.toLowerCase();
+  const candidates: Array<{ tok: string; count: number }> = [];
+  for (const [tok, count] of freq.entries()) {
+    if (tok.toLowerCase() === canonNorm) continue;
+    if (tok.length < 4) continue;
+    candidates.push({ tok, count });
+  }
+  if (candidates.length === 0) return canonical;
+  candidates.sort((a, b) => b.count - a.count);
+  // Take up to 2 secondary tokens to form a phrase.
+  const parts = candidates.slice(0, 2).map((c) => c.tok);
+  return `${canonical} ${parts.join(' ')}`;
+}
+
+/**
+ * Derive an alternative canonical name for a duplicate. Strategy:
+ *   - If the cluster has secondary tokens, use the top-2 to build a
+ *     descriptive phrase (preferred — more meaningful).
+ *   - ALWAYS append the numeric discriminator `-N` to guarantee
+ *     uniqueness even when two clusters share the same top-2 tokens.
+ *   - The `seen` set is consulted to find the smallest N that produces
+ *     a globally-unique name.
+ */
+function deriveAlternativeName(
+  canonical: string,
+  freq: Map<string, number> | undefined,
+  startN: number,
+  seen: Set<string>,
+): string {
+  const canonNorm = canonical.toLowerCase().trim();
+  let phrase = canonical;
+  if (freq && freq.size > 0) {
+    const candidates: Array<{ tok: string; count: number }> = [];
+    for (const [tok, count] of freq.entries()) {
+      if (tok.toLowerCase() === canonNorm) continue;
+      // Also skip tokens that already appear in the canonical phrase
+      // (so we don't append "restaurantes" to "restaurantes bogota").
+      if (canonNorm.includes(tok.toLowerCase())) continue;
+      if (tok.length < 4) continue;
+      candidates.push({ tok, count });
+    }
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.count - a.count);
+      const parts = candidates.slice(0, 2).map((c) => c.tok);
+      phrase = `${canonical} ${parts.join(' ')}`;
+    }
+  }
+  // Always append -N to guarantee uniqueness.
+  let n = startN;
+  let candidate = `${phrase}-${n}`;
+  while (seen.has(candidate.toLowerCase().trim())) {
+    n++;
+    candidate = `${phrase}-${n}`;
+  }
+  return candidate;
 }
 
 function pickCanonical(fallback: string, freq: Map<string, number>): string {

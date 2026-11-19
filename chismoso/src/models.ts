@@ -257,6 +257,24 @@ export interface Opportunity {
    * The Opportunity FICHA can render these as "Cómo se hará en la web".
    */
   tech_recommendations?: string[];
+  /**
+   * FASE-3-QUALITY §3.6 — concrete + complete opportunity metadata.
+   *
+   * Carries the structured V1-contract fields (niche, valueProposition,
+   * whyNow, risks, leadSearchHints, objective) so they survive a DB
+   * round-trip and are available to the mesh webhook payload builder
+   * (`mesh/auto-publish.ts → toOpportunityV1()`) without recomputation.
+   *
+   * Keys (all optional, but `generateOpportunity()` always populates them
+   * when called from the orchestrator):
+   *   - niche: string              (e.g. "collares personalizados para perros")
+   *   - valueProposition: string   (what to sell/offer)
+   *   - whyNow: string             (timing rationale)
+   *   - risks: string[]            (3-5 bullet risks)
+   *   - leadSearchHints: string[]  (3-5 search queries for AGENTE-LEADS)
+   *   - objective: string          (the originating investigation objective)
+   */
+  metadata?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------

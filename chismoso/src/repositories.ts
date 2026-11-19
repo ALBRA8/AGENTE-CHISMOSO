@@ -416,8 +416,9 @@ export class OpportunityRepository {
         id, title, description, problem, problem_ref, target_segment, geography,
         demand, growth, problem_severity, monetization, timing, market_fit,
         competition, uncertainty, score, score_breakdown_json, confidence,
-        suggested_next_agent, trend_ref, evidence_json, created_at, investigation_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        suggested_next_agent, trend_ref, evidence_json, created_at, investigation_id,
+        metadata_json
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       o.id,
       o.title,
@@ -442,6 +443,10 @@ export class OpportunityRepository {
       JSON.stringify(o.evidence),
       o.createdAt,
       investigationId ?? null,
+      // FASE-3-QUALITY §3.6 — metadata_json (niche, valueProposition,
+      // whyNow, risks, leadSearchHints, objective). Nullable for rows
+      // persisted by older code paths that don't populate it.
+      o.metadata ? JSON.stringify(o.metadata) : null,
     );
   }
 
@@ -480,6 +485,9 @@ function parseOpportunityRow(r: any): Opportunity {
     confidence: r.confidence,
     suggestedNextAgent: r.suggested_next_agent,
     createdAt: r.created_at,
+    // FASE-3-QUALITY §3.6 — restore metadata_json (may be null on rows
+    // persisted by older code paths that don't populate it).
+    metadata: r.metadata_json ? JSON.parse(r.metadata_json) : undefined,
   };
 }
 

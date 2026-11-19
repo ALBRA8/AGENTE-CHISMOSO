@@ -38,6 +38,7 @@ import { logger } from '../logger.js';
 import { MeshDB, DEFAULT_MESH_DB_PATH } from './db.js';
 import { deliverWebhook } from './webhook.js';
 import { createHash } from 'node:crypto';
+import type { OpportunityV1 } from '../schema/opportunity-v1.js';
 
 // ---------------------------------------------------------------------------
 // PUBLIC TYPES
@@ -169,6 +170,56 @@ export class AgentMesh {
       )
       .run(id, opportunity.id, agentTarget, JSON.stringify(payload), now);
     logger.info('Mesh event published', { id, opportunityId: opportunity.id, agentTarget });
+    return id;
+  }
+
+  /**
+   * FASE-3-QUALITY §3.7 — publish a validated OpportunityV1 payload to
+   * the mesh outbox. This is the canonical publishing path for V1+
+   * callers: the payload is ALREADY a conformant OpportunityV1 object
+   * (validated by `OpportunityV1Schema.parse()`), so AGENTE-LEADS is
+   * guaranteed to receive a well-formed contract.
+   *
+   * Idempotency: same as `publishOpportunity` — (opportunityId,
+   * agentTarget) uniqueness is enforced.
+   *
+   * The legacy `publishOpportunity(Opportunity)` method is kept for
+   * backward compat with callers (e.g. tests, the CLI) that haven't
+   * migrated to the V1 contract yet.
+   */
+  publishOpportunityV1(v1: OpportunityV1, targetOverride?: string): string {
+    const agentTarget = targetOverride || v1.suggestedNextAgent || 'AGENTE-LEADS';
+    const existing = this.db
+      .prepare('SELECT id FROM mesh_outbox WHERE opportunity_id = ? AND agent_target = ?')
+      .get(v1.id, agentTarget) as { id: string } | undefined;
+    if (existing) {
+      return existing.id;
+    }
+    const id = generateId('mesh_evt');
+    const now = nowISO();
+    // Wrap the V1 payload in the same envelope shape `publishOpportunity`
+    // uses, so subscribers can consume both via the same code path. The
+    // V1 object is the canonical, schema-validated contract; legacy
+    // opportunity fields are not duplicated here.
+    const payload = {
+      event: 'opportunity.v1',
+      schemaVersion: v1.schemaVersion,
+      opportunity: v1,
+      publishedAt: now,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO mesh_outbox (id, opportunity_id, agent_target, payload_json, created_at, delivery_attempts)
+         VALUES (?, ?, ?, ?, ?, 0)`,
+      )
+      .run(id, v1.id, agentTarget, JSON.stringify(payload), now);
+    logger.info('Mesh event published (V1)', {
+      id,
+      opportunityId: v1.id,
+      agentTarget,
+      niche: v1.niche,
+      leadSearchHints: v1.leadSearchHints.length,
+    });
     return id;
   }
 
