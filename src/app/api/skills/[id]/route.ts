@@ -445,6 +445,6 @@ export const POST = authedPOST(async (
  * a function-expression assignment (treats it as a stray token in an arg
  * list — see IMP-4 worklog).
  * IMP-2 note: fixed the re-export path (was 4 `../`, needs 5 to reach
- * /home/z/my-project/chismoso/dist from src/app/api/skills/[id]/route.ts).
+ * `<dashboard_root>/chismoso/dist` from src/app/api/skills/[id]/route.ts).
  */
 export { SkillStatus } from '../../../../../chismoso/dist/skills/index.js';

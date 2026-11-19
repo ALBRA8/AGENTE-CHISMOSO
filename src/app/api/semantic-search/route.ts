@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import type { NextResponse } from 'next/server';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
 import { validateQuery, validateTopK } from '@/lib/validation';
 import { apiBadRequest, apiOk, apiRateLimited, apiServerError } from '@/lib/api-response';
@@ -14,7 +15,12 @@ export const dynamic = 'force-dynamic';
 // CONSTANTS
 // ---------------------------------------------------------------------------
 
-const DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+// Resolve the chismoso DB path from CHISMOSO_DB_PATH or fall back to
+// `<cwd>/chismoso/data/chismoso.db` so the route is portable across dev
+// sandbox, Windows hosts and Docker images (Task FASE-2-DEPS removed
+// the hardcoded absolute literal).
+const DB_PATH =
+  process.env.CHISMOSO_DB_PATH ?? resolve(process.cwd(), 'chismoso', 'data', 'chismoso.db');
 const EMBEDDING_DIM = 256;
 const EMBEDDING_MODEL = 'tfidf-hash-v1';
 

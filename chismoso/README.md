@@ -6,10 +6,11 @@
 |----------------|-----------------------------------------------------------|
 | **Versión**    | 1.0.0                                                     |
 | **Estado**     | Production-ready (V1) — 41/41 tests pasan                 |
-| **Runtime**    | Node.js ≥ 20 (probado en Node 24)                        |
+| **Runtime**    | Node.js ≥ 20 LTS (recomendado 20 / 22 LTS; probado hasta Node 24) |
 | **Lenguaje**   | TypeScript 5.6 (ESM)                                     |
 | **Licencia**   | MIT                                                       |
-| **Dependencias** | `z-ai-web-dev-sdk` (web_search + page_reader + LLM), `better-sqlite3` |
+| **Dependencias** | `better-sqlite3` (SQLite), `bcryptjs` (auth), `z-ai-web-dev-sdk` (OPCIONAL — fallback cuando no hay providers externos) |
+| **Providers externos** | Serper / Tavily / Brave (búsqueda); Groq / NVIDIA / OpenAI (LLM) |
 
 ---
 

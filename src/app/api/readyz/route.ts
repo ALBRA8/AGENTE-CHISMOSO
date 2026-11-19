@@ -55,11 +55,11 @@ export const dynamic = 'force-dynamic';
 //   2. CHISMOSO_ROOT env var — parent dir of the chismoso project.
 //      dist/ is computed as `${CHISMOSO_ROOT}/dist`. Useful for
 //      operators who already set CHISMOSO_ROOT for the CLI path.
-//   3. Fallback — relative to the Next.js process CWD. In the dev
-//      sandbox that's `/home/z/my-project`, so the path resolves to
-//      `/home/z/my-project/chismoso/dist`. In a Docker image with
-//      WORKDIR /app and chismoso vendored at /app/chismoso, the path
-//      resolves to /app/chismoso/dist without any env wiring.
+//   3. Fallback — relative to the Next.js process CWD. In the canonical
+//      dev layout that's the dashboard root, so the path resolves to
+//      `<cwd>/chismoso/dist`. In a Docker image with WORKDIR /app and
+//      chismoso vendored at /app/chismoso, the path resolves to
+//      /app/chismoso/dist without any env wiring.
 //
 // We compute once at module load (cheap) and reuse on every request —
 // /readyz is probed every 5–10s by the LB so per-request path

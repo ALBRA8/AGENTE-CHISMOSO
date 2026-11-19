@@ -426,7 +426,7 @@ export class Orchestrator {
           //
           // After persisting the Opportunity, synthesise a ClonaKit-style
           // FICHA spec and write it to disk under
-          // /home/z/my-project/download/chismoso/fichas/ficha-<opp_id>.md
+          // <dashboard_root>/download/chismoso/fichas/ficha-<opp_id>.md
           //
           // The FICHA is the INTERFACE between discovery (CHISMOSO) and
           // construction (a future AGENTE-MVP, a human developer, or an

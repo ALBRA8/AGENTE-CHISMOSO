@@ -43,6 +43,7 @@ import { AnomalyDetector } from '../anomaly/index.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { investigateProduct } from '../intelligence/product-intel.js';
+import { FICHAS_DIR as FICHAS_DIR_RESOLVED } from '../ficha/renderer.js';
 
 // ---------------------------------------------------------------------------
 // TYPES
@@ -191,7 +192,7 @@ export async function readChismosoResource(
     return readInvestigationById(deps, id);
   }
   // chismoso://fichas/latest + chismoso://fichas/{id} — Task IMP-CLONA-1.
-  // FICHA files live on disk under /home/z/my-project/download/chismoso/fichas/
+  // FICHA files live on disk under <dashboard_root>/download/chismoso/fichas/
   // and are produced by the orchestrator at the end of every investigation
   // (one FICHA per persisted Opportunity). The "latest" alias returns the
   // file with the newest mtime.
@@ -503,12 +504,12 @@ async function readIngestedDocuments(deps: ChismosoMCPServerDeps): Promise<any> 
 // ---------------------------------------------------------------------------
 // FICHA HANDLERS (Task IMP-CLONA-1)
 //
-// FICHA files live on disk under /home/z/my-project/download/chismoso/fichas/
-// (see FICHAS_DIR in tools.ts). They are produced by the orchestrator at the
-// end of every investigation — one FICHA per persisted Opportunity. The
-// `chismoso_get_ficha` MCP tool is the authoritative way to retrieve one;
-// the resources here are a convenience for MCP clients that prefer to
-// read by URI rather than call a tool.
+// FICHA files live on disk under <dashboard_root>/download/chismoso/fichas/
+// (see FICHAS_DIR in tools.ts / renderer.ts). They are produced by the
+// orchestrator at the end of every investigation — one FICHA per persisted
+// Opportunity. The `chismoso_get_ficha` MCP tool is the authoritative way
+// to retrieve one; the resources here are a convenience for MCP clients
+// that prefer to read by URI rather than call a tool.
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -530,7 +531,10 @@ async function readFichaById(_deps: ChismosoMCPServerDeps, id: string): Promise<
     return { found: false, id, error: 'Invalid opportunity_id (allowed: [A-Za-z0-9_-]+)' };
   }
   const safeId = path.basename(id);
-  const fichasDir = '/home/z/my-project/download/chismoso/fichas';
+  // Reuse the canonical FICHAS_DIR from tools.ts (which in turn re-uses
+  // ficha/renderer.ts) so there is exactly one source of truth for the
+  // path — Task FASE-2-DEPS made it env-overridable.
+  const fichasDir = FICHAS_DIR_RESOLVED;
   const fichaPath = path.join(fichasDir, `ficha-${safeId}.md`);
   const resolved = path.resolve(fichaPath);
   if (!resolved.startsWith(path.resolve(fichasDir) + path.sep)) {

@@ -66,6 +66,7 @@ import {
   type ChatSession,
 } from '@/lib/chat-session';
 import { getClientIP, rateLimit } from '@/lib/rate-limit';
+import { optionalAuth, getAuthStatus } from '@/lib/middleware';
 import { getChatTool, toolsForPrompt } from './tools';
 
 export const runtime = 'nodejs';
@@ -495,7 +496,41 @@ async function runAgentLoop(
 // Route handler
 // ---------------------------------------------------------------------------
 
-export async function POST(req: NextRequest) {
+/**
+ * POST /api/chat — wrapped with `optionalAuth` (Task FASE-1-SEC §1.1).
+ *
+ * `optionalAuth` attaches the auth check result to the request WITHOUT
+ * rejecting it — so in dev (auth disabled) the dashboard chat UX still
+ * works with a plain `fetch` (no CSRF token, no session cookie). In
+ * production (auth enabled by default — see `src/lib/auth.ts::getAuthConfig`),
+ * we close the door here: an unauthenticated request gets 401, and a
+ * session-cookie caller that failed CSRF gets 403 (matching `withAuth`'s
+ * canonical error shape used by the other protected routes).
+ *
+ * This preserves the local loopback UX (F-002) while enforcing auth in
+ * production deployments.
+ */
+export const POST = optionalAuth(async (req: NextRequest) => {
+  // --- Production / auth-enabled gate -------------------------------
+  // In dev, `checkAuth` returns `{ ok: true, reason: 'auth_disabled' }`
+  // and we proceed. In production, anonymous callers get 401 and
+  // CSRF-failing session callers get 403.
+  const auth = getAuthStatus(req);
+  if (!auth.ok) {
+    const reason = auth.reason ?? 'unknown';
+    const isCsrfFailure = reason === 'missing_csrf' || reason === 'invalid_csrf';
+    return new Response(
+      JSON.stringify({
+        error: isCsrfFailure ? 'Forbidden' : 'Unauthorized',
+        details: { reason },
+      }),
+      {
+        status: isCsrfFailure ? 403 : 401,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+  }
+
   // --- Rate limit ------------------------------------------------------
   const ip = getClientIP(req);
   const rl = rateLimit(`chat:${ip}`, CHAT_RATE_LIMIT);
@@ -568,7 +603,7 @@ export async function POST(req: NextRequest) {
   });
 
   return response;
-}
+});
 
 // ---------------------------------------------------------------------------
 // GET /api/chat — convenience health/info endpoint

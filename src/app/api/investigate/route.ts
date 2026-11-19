@@ -490,11 +490,11 @@ export const POST = authedPOST(async (req: NextRequest) => {
     // R2-IMP-SEC (audit H-7 + R2-9): the `log` field — last 200 lines
     // of the chismoso CLI's stderr — was previously returned on EVERY
     // successful response. Stderr contains absolute file paths
-    // (`/home/z/my-project/chismoso/dist/...`), provider echoes, and
-    // any thrown stack — exactly the kind of internal detail the
-    // audit's H-7 finding calls out. In production we omit it entirely;
-    // operators grep the server-side log keyed by `investigationId`
-    // (which IS returned) for triage. Dev keeps the field so the
+    // (`<cwd>/chismoso/dist/...`), provider echoes, and any thrown
+    // stack — exactly the kind of internal detail the audit's H-7
+    // finding calls out. In production we omit it entirely; operators
+    // grep the server-side log keyed by `investigationId` (which IS
+    // returned) for triage. Dev keeps the field so the
     // operator can eyeball CLI progress without leaving the dashboard.
     ...(process.env.NODE_ENV !== 'production'
       ? { log: result.stderr.split('\n').slice(-200).join('\n') }

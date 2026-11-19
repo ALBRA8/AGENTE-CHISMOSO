@@ -90,12 +90,24 @@ export const SESSION_TTL_SEC_DEFAULT = 24 * 60 * 60; // 24h
 export function getAuthConfig(): AuthConfig {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   const enabledEnv = process.env.CHISMOSO_AUTH_ENABLED;
-  // Fail-closed in production: when the operator hasn't explicitly said
-  // CHISMOSO_AUTH_ENABLED=false, default to TRUE in production builds.
+
+  // Fail-closed in production (Task FASE-1-SEC §1.3).
+  //
+  //   - Production (NODE_ENV === 'production'): auth is ON by default.
+  //     The only way to disable is to set CHISMOSO_AUTH_ENABLED=false
+  //     explicitly (e.g. for an emergency test run). Anything else —
+  //     unset, 'true', '', typos like 'yes' — keeps auth ON. The
+  //     previous logic (`enabledEnv === 'true'`) treated an empty
+  //     string or any non-'true' value as "off", which silently
+  //     disabled auth in production when an operator left the var
+  //     blank or mistyped it.
+  //   - Dev / test (NODE_ENV !== 'production'): auth is OFF by default.
+  //     Set CHISMOSO_AUTH_ENABLED=true to exercise the auth flow
+  //     locally.
   const enabled =
-    enabledEnv !== undefined
-      ? enabledEnv === 'true'
-      : nodeEnv === 'production';
+    nodeEnv === 'production'
+      ? enabledEnv !== 'false'
+      : enabledEnv === 'true';
 
   const headerName = process.env.CHISMOSO_AUTH_HEADER ?? AUTH_HEADER_DEFAULT;
   const rawTokens = process.env.CHISMOSO_AUTH_TOKENS ?? '';

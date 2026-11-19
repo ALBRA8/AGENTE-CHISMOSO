@@ -10,11 +10,17 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import ZAI from 'z-ai-web-dev-sdk';
+import { loadZAIInstance, MISSING_PROVIDER_HINT } from './zai-loader.js';
 import { makeCapabilities, type IProvider, type ProviderQuery, type ProviderSearchResult, type RawItem } from './base.js';
 import { ErrorCode, classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ProviderHealth, SourceType } from '../models.js';
+
+/**
+ * Minimal structural type for the lazily-loaded z-ai-web-dev-sdk instance
+ * (see zai-loader.ts for the rationale behind `any`).
+ */
+type ZAIInstance = any;
 
 function getSearchConfig(): { serperKey?: string; tavilyKey?: string; braveKey?: string } {
   const serperKey = process.env.SERPER_API_KEY;
@@ -43,7 +49,7 @@ function getSearchConfig(): { serperKey?: string; tavilyKey?: string; braveKey?:
 }
 
 export class WebSearchProvider implements IProvider {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIInstance | null> | null = null;
   private lastHealthCheck: { ts: number; status: ProviderHealth } = {
     ts: 0,
     status: ProviderHealth.OK,
@@ -64,9 +70,15 @@ export class WebSearchProvider implements IProvider {
     return true; // acepta cualquier query textual
   }
 
-  private async getZAI(): Promise<ZAI> {
+  /**
+   * Lazily resolve the z-ai-web-dev-sdk instance. Returns `null` when the
+   * SDK is not installed — `search()` falls back to external Serper /
+   * Tavily / Brave providers and surfaces a clear config error if none
+   * are configured.
+   */
+  private async getZAI(): Promise<ZAIInstance | null> {
     if (!this.zaiPromise) {
-      this.zaiPromise = ZAI.create();
+      this.zaiPromise = loadZAIInstance();
     }
     return this.zaiPromise;
   }
@@ -77,12 +89,19 @@ export class WebSearchProvider implements IProvider {
     if (now - this.lastHealthCheck.ts < 30_000) {
       return this.lastHealthCheck.status;
     }
+    // External providers take precedence — if any of them is configured,
+    // the provider is considered healthy even when the SDK is missing.
+    const cfg = getSearchConfig();
+    if (cfg.serperKey || cfg.tavilyKey || cfg.braveKey) {
+      this.lastHealthCheck = { ts: now, status: ProviderHealth.OK };
+      return ProviderHealth.OK;
+    }
     try {
       const zai = await this.getZAI();
       // Sanity check mínimo: si la instancia existe, consideramos OK.
       void zai;
-      this.lastHealthCheck = { ts: now, status: ProviderHealth.OK };
-      return ProviderHealth.OK;
+      this.lastHealthCheck = { ts: now, status: zai ? ProviderHealth.OK : ProviderHealth.UNAVAILABLE };
+      return zai ? ProviderHealth.OK : ProviderHealth.UNAVAILABLE;
     } catch (e) {
       logger.warn('WebSearchProvider health check failed', { err: String(e) });
       this.lastHealthCheck = { ts: now, status: ProviderHealth.UNAVAILABLE };
@@ -156,9 +175,23 @@ export class WebSearchProvider implements IProvider {
       }
     }
 
-    // 3. Fallback to ZAI SDK
+    // 3. Fallback to ZAI SDK (only loaded if installed).
+    const zai = await this.getZAI();
+    if (!zai) {
+      // No external keys + SDK not installed — surface the canonical
+      // configuration hint so the operator knows exactly what to set.
+      const cerr = classifyError(new Error(MISSING_PROVIDER_HINT), 'web_search');
+      logger.error('WebSearchProvider error', { err: cerr.message, code: cerr.code });
+      return {
+        providerName: 'web_search',
+        items: [],
+        error: cerr.message,
+        errorCode: ErrorCode.PROVIDER_UNAVAILABLE,
+        durationMs: Date.now() - t0,
+        query: q.query,
+      };
+    }
     try {
-      const zai = await this.getZAI();
       const args: { query: string; num: number; recency_days?: number } = {
         query: q.query,
         num,

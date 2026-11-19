@@ -41,11 +41,13 @@ import {
   createDefaultToolRegistry,
   ingestDocumentTool,
 } from '../orchestrator/index.js';
+import { FICHAS_DIR as FICHAS_DIR_FROM_RENDERER } from '../ficha/renderer.js';
 
 // Directory where the orchestrator persists rendered FICHA markdown
-// files. Mirrors the constant in `../ficha/renderer.ts`. When this path
-// changes, update both.
-const FICHAS_DIR = '/home/z/my-project/download/chismoso/fichas';
+// files. Re-exported from `../ficha/renderer.ts` so there is a single
+// source of truth for the path (Task FASE-2-DEPS removed the hardcoded
+// absolute literal). When the path changes, update only renderer.ts.
+const FICHAS_DIR = FICHAS_DIR_FROM_RENDERER;
 
 // ---------------------------------------------------------------------------
 // DEPS — injected by the MCP server (see server.ts)

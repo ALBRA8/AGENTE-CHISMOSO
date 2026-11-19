@@ -6,8 +6,8 @@
  * (npx -y @modelcontextprotocol/server-github) or an HTTP/SSE endpoint.
  *
  * Config file path resolution order:
- *   1. $CHISMOSO_MCP_CONFIG   (explicit override)
- *   2. /home/z/my-project/chismoso/data/mcp-servers.json   (default repo path)
+ *   1. $CHISMOSO_MCP_CONFIG    (explicit override)
+ *   2. <chismoso_root>/data/mcp-servers.json   (default repo path)
  *
  * If the file does not exist, `loadMCPConfig` returns DEFAULT_CONFIG
  * (empty servers map). `writeDefaultConfig` will materialize it on disk
@@ -46,7 +46,28 @@ export interface MCPConfig {
 // DEFAULT CONFIG (shipped empty — MCP servers are explicitly opt-in)
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_CONFIG_PATH = '/home/z/my-project/chismoso/data/mcp-servers.json';
+/**
+ * Default location for the MCP server config file.
+ *
+ * Resolved from `process.cwd()` so the CLI works portably across dev
+ * sandbox, Windows hosts and Docker images. Override with the
+ * CHISMOSO_MCP_CONFIG env var (handled by `resolveConfigPath()` below).
+ */
+function resolveDefaultConfigPath(): string {
+  // Walk up from CWD to find a directory containing `chismoso/package.json`.
+  // If CWD itself is chismoso/, data/mcp-servers.json is correct.
+  const cwd = process.cwd();
+  if (existsSync(path.join(cwd, 'package.json')) && existsSync(path.join(cwd, 'data'))) {
+    return path.join(cwd, 'data', 'mcp-servers.json');
+  }
+  if (existsSync(path.join(cwd, 'chismoso', 'package.json'))) {
+    return path.join(cwd, 'chismoso', 'data', 'mcp-servers.json');
+  }
+  // Fallback: assume CWD is the chismoso subproject.
+  return path.join(cwd, 'data', 'mcp-servers.json');
+}
+
+export const DEFAULT_CONFIG_PATH = resolveDefaultConfigPath();
 
 export const DEFAULT_CONFIG: MCPConfig = {
   servers: {

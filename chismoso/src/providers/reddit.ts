@@ -11,11 +11,17 @@
  * NO simula datos. Devuelve lo que la búsqueda retorna.
  */
 
-import ZAI from 'z-ai-web-dev-sdk';
+import { loadZAIInstance, MISSING_PROVIDER_HINT } from './zai-loader.js';
 import { makeCapabilities, type IProvider, type ProviderQuery, type ProviderSearchResult, type RawItem } from './base.js';
 import { ErrorCode, classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ProviderHealth, SourceType } from '../models.js';
+
+/**
+ * Minimal structural type for the lazily-loaded z-ai-web-dev-sdk instance
+ * (see zai-loader.ts for the rationale behind `any`).
+ */
+type ZAIInstance = any;
 
 const COMMUNITY_DOMAINS = ['reddit.com', 'quora.com'];
 
@@ -31,7 +37,7 @@ function buildCommunityQuery(query: string): string {
 }
 
 export class RedditProvider implements IProvider {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIInstance | null> | null = null;
   private lastHealthCheck: { ts: number; status: ProviderHealth } = { ts: 0, status: ProviderHealth.OK };
 
   capabilities() {
@@ -49,8 +55,13 @@ export class RedditProvider implements IProvider {
     return true;
   }
 
-  private async getZAI(): Promise<ZAI> {
-    if (!this.zaiPromise) this.zaiPromise = ZAI.create();
+  /**
+   * Lazily resolve the z-ai-web-dev-sdk instance. Returns `null` when the
+   * SDK is not installed — `search()` surfaces the canonical configuration
+   * hint so the operator can wire external providers or install the SDK.
+   */
+  private async getZAI(): Promise<ZAIInstance | null> {
+    if (!this.zaiPromise) this.zaiPromise = loadZAIInstance();
     return this.zaiPromise;
   }
 
@@ -60,8 +71,8 @@ export class RedditProvider implements IProvider {
     try {
       const zai = await this.getZAI();
       void zai;
-      this.lastHealthCheck = { ts: now, status: ProviderHealth.OK };
-      return ProviderHealth.OK;
+      this.lastHealthCheck = { ts: now, status: zai ? ProviderHealth.OK : ProviderHealth.UNAVAILABLE };
+      return zai ? ProviderHealth.OK : ProviderHealth.UNAVAILABLE;
     } catch (e) {
       logger.warn('RedditProvider health check failed', { err: String(e) });
       this.lastHealthCheck = { ts: now, status: ProviderHealth.UNAVAILABLE };
@@ -72,8 +83,20 @@ export class RedditProvider implements IProvider {
   async search(q: ProviderQuery): Promise<ProviderSearchResult> {
     const t0 = Date.now();
     const num = Math.min(q.num ?? 10, 20);
+    const zai = await this.getZAI();
+    if (!zai) {
+      const cerr = classifyError(new Error(MISSING_PROVIDER_HINT), 'reddit_communities');
+      logger.error('RedditProvider error', { err: cerr.message, code: cerr.code });
+      return {
+        providerName: 'reddit_communities',
+        items: [],
+        error: cerr.message,
+        errorCode: ErrorCode.PROVIDER_UNAVAILABLE,
+        durationMs: Date.now() - t0,
+        query: q.query,
+      };
+    }
     try {
-      const zai = await this.getZAI();
       const args: { query: string; num: number; recency_days?: number } = {
         query: buildCommunityQuery(q.query),
         num,

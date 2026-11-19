@@ -80,7 +80,74 @@ import {
   type FeedbackTargetType,
 } from './feedback/index.js';
 
-const SCHEDULER_LOG_PATH = '/home/z/my-project/chismoso/data/scheduler.log';
+// ---------------------------------------------------------------------------
+// PATH RESOLUTION HELPERS (Task FASE-2-DEPS)
+//
+// All on-disk paths are derived from process.cwd() + env vars so the CLI is
+// portable across the dev sandbox, Windows hosts and Docker images. The
+// legacy hardcoded absolute literals have been replaced by the helpers
+// below — every constant is overridable through env vars so an operator
+// can relocate logs / state files / env loading without patching code.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the chismoso project root. Defaults to `process.cwd()` so that
+ * running `chismoso ...` from inside the chismoso/ directory (the common
+ * case for V1 operators) keeps the historical paths. Override with
+ * CHISMOSO_ROOT when launching from a different CWD (e.g. systemd units
+ * that ExecStart from /opt/chismoso).
+ */
+function resolveChismosoRoot(): string {
+  return process.env.CHISMOSO_ROOT ?? process.cwd();
+}
+
+/**
+ * Resolve the parent directory of the dashboard. In the canonical layout
+ * the chismoso/ subproject lives inside the dashboard repo, so its parent
+ * is the dashboard root. This is used by `resolveEnvPath()` to find .env
+ * files and by FICHA / extracted-text directories which are written under
+ * `download/chismoso/` at the dashboard root.
+ */
+function resolveDashboardRoot(): string {
+  const explicit = process.env.CHISMOSO_DASHBOARD_ROOT;
+  if (explicit) return explicit;
+  const root = resolveChismosoRoot();
+  // If CWD is `chismoso/`, the dashboard root is the parent. If CWD is the
+  // dashboard root already (rare for V1) we keep it as-is. Detect by
+  // looking for a `chismoso/` sibling directory.
+  if (existsSync(path.join(root, 'chismoso', 'package.json'))) {
+    return root;
+  }
+  return path.dirname(root);
+}
+
+const CHISMOSO_ROOT = resolveChismosoRoot();
+const DASHBOARD_ROOT = resolveDashboardRoot();
+
+/**
+ * Scheduler log file. Defaults to `<chismoso_root>/data/scheduler.log`,
+ * override with CHISMOSO_SCHEDULER_LOG.
+ */
+const SCHEDULER_LOG_PATH =
+  process.env.CHISMOSO_SCHEDULER_LOG ?? path.join(CHISMOSO_ROOT, 'data', 'scheduler.log');
+
+/**
+ * State file persisted by `chismoso anomalies --watch` between polls so
+ * it can emit only the NEW anomalies. Defaults to
+ * `<chismoso_root>/data/anomalies.state.json`, override with
+ * CHISMOSO_ANOMALIES_STATE.
+ */
+const ANOMALIES_STATE_PATH =
+  process.env.CHISMOSO_ANOMALIES_STATE ?? path.join(CHISMOSO_ROOT, 'data', 'anomalies.state.json');
+
+/**
+ * Where `chismoso ingest` dumps the raw extracted text for inspection.
+ * Defaults to `<dashboard_root>/download/chismoso/extracted`, override
+ * with CHISMOSO_EXTRACTED_TEXT_DIR.
+ */
+const EXTRACTED_TEXT_DIR =
+  process.env.CHISMOSO_EXTRACTED_TEXT_DIR ??
+  path.join(DASHBOARD_ROOT, 'download', 'chismoso', 'extracted');
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -563,7 +630,7 @@ Environment:
   CHISMOSO_DB_PATH          SQLite path (default: data/chismoso.db)
   CHISMOSO_LOG_LEVEL        DEBUG | INFO | WARN | ERROR
   CHISMOSO_GEOGRAPHY        Default geography (default: global)
-  CHISMOSO_OUTPUT_DIR       Where to save reports (default: /home/z/my-project/download/chismoso)
+  CHISMOSO_OUTPUT_DIR       Where to save reports (default: <repo>/download/chismoso)
   CHISMOSO_WATCH_CONFIG     Watch config JSON path (default: data/watch.json)
 `);
 }
@@ -864,7 +931,7 @@ function runAnomaliesCommand(args: string[], cfg: ReturnType<typeof resolveConfi
   const topicArg = argValue(args, '--topic');
   const watchMode = args.includes('--watch');
   const intervalMs = argInt(args, '--interval') ?? 5 * 60 * 1000;
-  const statePath = '/home/z/my-project/chismoso/data/anomalies.state.json';
+  const statePath = ANOMALIES_STATE_PATH;
 
   const detectOnce = (): { anomalies: any[]; ranAt: string } => {
     const db = new ChismosoDB({ path: cfg.dbPath });
@@ -2441,10 +2508,9 @@ async function upsertUser(db: MeshDB, username: string, password: string, role: 
 
 /**
  * Hash a plaintext password with bcrypt. Uses `bcryptjs` (pure-JS impl)
- * — installed at the Next.js project root, available via Node module
- * resolution from the chismoso/ subproject too because the chismoso
- * process is launched from `/home/z/my-project/chismoso` and its
- * `node_modules` lookups fall through to the parent.
+ * — declared as a direct dependency of the chismoso/ subproject (Task
+ * FASE-2-DEPS) so `users add` works regardless of whether the Next.js
+ * dashboard has the package installed.
  *
  * Cost factor 12 = ~250ms on commodity hardware. Matches
  * `src/lib/auth.ts::BCRYPT_ROUNDS`.
@@ -2457,20 +2523,21 @@ async function hashPasswordBcrypt(plaintext: string): Promise<string> {
 }
 
 /**
- * Resolves the .env path. Prefers the Next.js project root .env, falls
+ * Resolves the .env path. Prefers the dashboard project root .env, falls
  * back to the chismoso/ subdir .env (which is where chismoso-specific
- * vars typically live in dev).
+ * vars typically live in dev). Override both locations with the
+ * CHISMOSO_DASHBOARD_ROOT / CHISMOSO_ROOT env vars.
  */
 function resolveEnvPath(): string {
   const candidates = [
-    '/home/z/my-project/.env',
-    '/home/z/my-project/chismoso/.env',
+    path.join(DASHBOARD_ROOT, '.env'),
+    path.join(CHISMOSO_ROOT, '.env'),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }
-  // Default to the Next.js root .env (will be created on first write).
-  return '/home/z/my-project/.env';
+  // Default to the dashboard root .env (will be created on first write).
+  return path.join(DASHBOARD_ROOT, '.env');
 }
 
 /**
@@ -2680,7 +2747,7 @@ function runFeedbackCommand(args: string[], cfg: ReturnType<typeof resolveConfig
 //
 // FICHA files are produced by the orchestrator at the end of every
 // investigation (one FICHA per persisted Opportunity). They live on disk
-// under /home/z/my-project/download/chismoso/fichas/ficha-<opp_id>.md
+// under <dashboard_root>/download/chismoso/fichas/ficha-<opp_id>.md
 // and serve as the INTERFACE between discovery (CHISMOSO) and
 // construction (a future AGENTE-MVP, a human developer, or an AI like
 // Cursor). They describe WHAT to build, not HOW.
@@ -2719,11 +2786,13 @@ async function runFichasCommand(args: string[], cfg: ReturnType<typeof resolveCo
 // OCR / text / markdown / HTML), extracts text, normalizes into Signals +
 // Evidence, persists them into a fresh investigation row, and prints a
 // JSON summary to stdout. Also dumps the raw extracted text to
-// /home/z/my-project/download/chismoso/extracted/<filename>.txt for
+// <dashboard_root>/download/chismoso/extracted/<filename>.txt for
 // inspection.
 // ---------------------------------------------------------------------------
 
-const EXTRACTED_TEXT_DIR = '/home/z/my-project/download/chismoso/extracted';
+// EXTRACTED_TEXT_DIR is defined once near the top of the file (Task
+// FASE-2-DEPS) so it's overridable via the CHISMOSO_EXTRACTED_TEXT_DIR
+// env var and resolved relative to the dashboard root, not hardcoded.
 
 async function runIngestCommand(args: string[], cfg: ReturnType<typeof resolveConfig>): Promise<void> {
   const filePathArg = args[1];

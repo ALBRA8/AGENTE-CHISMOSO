@@ -31,7 +31,7 @@ interface InvestigationSummary {
  * download directory for saved reports.
  */
 export async function GET() {
-  // Strategy: read all reports saved on disk in /home/z/my-project/download/chismoso/
+  // Strategy: read all reports saved on disk in <dashboard_root>/download/chismoso/
   // Each pair (report-*.md + report-*.json) corresponds to one investigation.
   // The JSON contains the full machine report which we summarize.
   const fs = await import('node:fs/promises');

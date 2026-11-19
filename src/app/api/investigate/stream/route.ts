@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { rateLimit, getClientIP, LIMITS } from '@/lib/rate-limit';
 import { apiBadRequest, apiRateLimited, apiUnavailable } from '@/lib/api-response';
 import {
@@ -43,7 +44,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
+// Resolve the chismoso project root from CHISMOSO_ROOT or fall back to
+// `<cwd>/chismoso` so the route is portable across dev sandbox, Windows
+// hosts and Docker images (Task FASE-2-DEPS removed the hardcoded
+// absolute literal).
+const CHISMOSO_ROOT = process.env.CHISMOSO_ROOT || path.resolve(process.cwd(), 'chismoso');
 const RETRY_AFTER_SEC = 30;
 
 /**

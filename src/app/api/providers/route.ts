@@ -1,12 +1,17 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { apiOk, apiServerError } from '@/lib/api-response';
 import { getCached, setCached } from '@/lib/cache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CHISMOSO_ROOT = '/home/z/my-project/chismoso';
+// Resolve the chismoso project root from CHISMOSO_ROOT or fall back to
+// `<cwd>/chismoso` so the route is portable across dev sandbox, Windows
+// hosts and Docker images (Task FASE-2-DEPS removed the hardcoded
+// absolute literal).
+const CHISMOSO_ROOT = process.env.CHISMOSO_ROOT || path.resolve(process.cwd(), 'chismoso');
 
 /**
  * Pre-compiled CLI is preferred (faster startup — no TS compilation per call).

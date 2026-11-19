@@ -22,10 +22,19 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import ZAI from 'z-ai-web-dev-sdk';
+import { loadZAIInstance, MISSING_PROVIDER_HINT } from '../providers/zai-loader.js';
 import { logger } from '../logger.js';
 import { classifyError, ErrorCode } from '../errors.js';
 import { llmCircuitBreaker, CircuitBreakerError } from '../circuit-breaker.js';
+
+/**
+ * Minimal structural type for the lazily-loaded z-ai-web-dev-sdk instance.
+ * We keep it loose (any) because the SDK ships its own types and we don't
+ * want to couple every caller to a specific SDK version. The loader returns
+ * `null` when the SDK is not installed so this type is only used after a
+ * successful `loadZAIInstance()` call.
+ */
+type ZAIInstance = any;
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -74,10 +83,15 @@ function getCustomProviderConfig(): { apiKey: string; baseUrl: string; model: st
 }
 
 export class LLMClient {
-  private zaiPromise: Promise<ZAI> | null = null;
+  private zaiPromise: Promise<ZAIInstance | null> | null = null;
 
-  private async getZAI(): Promise<ZAI> {
-    if (!this.zaiPromise) this.zaiPromise = ZAI.create();
+  /**
+   * Lazily resolve the z-ai-web-dev-sdk instance. Returns `null` when the
+   * SDK is not installed — callers must null-check and surface a clear
+   * configuration error via `MISSING_PROVIDER_HINT`.
+   */
+  private async getZAI(): Promise<ZAIInstance | null> {
+    if (!this.zaiPromise) this.zaiPromise = loadZAIInstance();
     return this.zaiPromise;
   }
 
@@ -130,6 +144,11 @@ export class LLMClient {
 
         try {
           const zai = await this.getZAI();
+          if (!zai) {
+            // No external provider keys + SDK not installed — fail with a
+            // clear configuration error instead of an opaque TypeError.
+            throw new Error(`LLM unavailable: ${MISSING_PROVIDER_HINT}`);
+          }
           const completion: any = await zai.chat.completions.create({
             messages,
             thinking: { type: opts?.thinking ? 'enabled' : 'disabled' },
@@ -149,6 +168,9 @@ export class LLMClient {
           if (cerr.code === ErrorCode.RATE_LIMIT || cerr.code === ErrorCode.TEMPORARY_FAILURE || cerr.code === ErrorCode.TIMEOUT) {
             await sleep(cerr.retryAfterMs ?? 1500);
             const zai = await this.getZAI();
+            if (!zai) {
+              throw new Error(`LLM unavailable: ${MISSING_PROVIDER_HINT}`);
+            }
             const completion: any = await zai.chat.completions.create({
               messages,
               thinking: { type: opts?.thinking ? 'enabled' : 'disabled' },

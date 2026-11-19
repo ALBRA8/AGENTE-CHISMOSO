@@ -16,11 +16,31 @@
 
 import Database from 'better-sqlite3';
 import type { Database as DB } from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, existsSync } from 'node:fs';
+import path, { dirname } from 'node:path';
 import { logger } from '../logger.js';
 
-export const DEFAULT_MESH_DB_PATH = '/home/z/my-project/chismoso/data/chismoso.db';
+/**
+ * Default path for the shared CHISMOSO SQLite database. Resolved relative
+ * to the chismoso project root (auto-detected from `process.cwd()`) and
+ * overridable via `CHISMOSO_DB_PATH` — Task FASE-2-DEPS removed the
+ * hardcoded absolute literal.
+ */
+function resolveDefaultMeshDbPath(): string {
+  if (process.env.CHISMOSO_DB_PATH) return process.env.CHISMOSO_DB_PATH;
+  const cwd = process.cwd();
+  // If cwd is chismoso/ (contains package.json + data/), use data/.
+  if (existsSync(path.join(cwd, 'package.json')) && existsSync(path.join(cwd, 'data'))) {
+    return path.join(cwd, 'data', 'chismoso.db');
+  }
+  // If cwd is the dashboard root (contains chismoso/), use chismoso/data/.
+  if (existsSync(path.join(cwd, 'chismoso', 'package.json'))) {
+    return path.join(cwd, 'chismoso', 'data', 'chismoso.db');
+  }
+  return path.join(cwd, 'data', 'chismoso.db');
+}
+
+export const DEFAULT_MESH_DB_PATH = resolveDefaultMeshDbPath();
 
 const MESH_SCHEMA = `
 CREATE TABLE IF NOT EXISTS mesh_outbox (

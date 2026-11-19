@@ -1,39 +1,58 @@
-import { NextResponse } from 'next/server';
-import { readFile, writeFile } from 'fs/promises';
+/**
+ * /api/telegram — Telegram bot token config (Task FASE-1-SEC §1.1)
+ *
+ * GET  — returns `token_set: boolean` + bot info. NEVER returns the
+ *        full token. Protected by `authedRoute`.
+ * PUT  — saves the Telegram bot token to `.telegram-settings.json`
+ *        with mode 0o600. If `token` is empty, the existing value
+ *        is preserved. Protected by `authedRoute`.
+ * POST — probes the Telegram API with the saved token to verify it
+ *        (returns the bot's username on success). Protected by
+ *        `authedRoute`.
+ */
+
+import { NextResponse, NextRequest } from 'next/server';
+import { readFile, writeFile, chmod } from 'fs/promises';
 import path from 'path';
+import { authedRoute } from '@/lib/middleware';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const TELEGRAM_FILE = path.join(process.cwd(), '.telegram-settings.json');
 
-export async function GET() {
+async function readTelegram(): Promise<any | null> {
   try {
     const data = await readFile(TELEGRAM_FILE, 'utf-8');
-    const json = JSON.parse(data);
-    return NextResponse.json({
-      token_set: Boolean(json.token || process.env.TELEGRAM_BOT_TOKEN),
-      enabled: json.enabled ?? false,
-      bot_username: json.bot_username || null,
-    });
+    return JSON.parse(data);
   } catch {
-    const token = process.env.TELEGRAM_BOT_TOKEN || '';
-    return NextResponse.json({
-      token_set: Boolean(token),
-      enabled: Boolean(token),
-      bot_username: null,
-    });
+    return null;
   }
 }
 
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json();
-    let current: any = {};
-    try {
-      const data = await readFile(TELEGRAM_FILE, 'utf-8');
-      current = JSON.parse(data);
-    } catch {}
+export const GET = authedRoute(async (_req: NextRequest) => {
+  const existing = await readTelegram();
+  const token = existing?.token || process.env.TELEGRAM_BOT_TOKEN || '';
+  return NextResponse.json({
+    token_set: Boolean(token),
+    enabled: existing?.enabled ?? false,
+    bot_username: existing?.bot_username || null,
+  });
+});
 
-    const token = body.token !== undefined ? body.token.trim() : current.token;
-    const enabled = body.enabled !== undefined ? Boolean(body.enabled) : current.enabled ?? true;
+export const PUT = authedRoute(async (req: NextRequest) => {
+  try {
+    const body = await req.json();
+    const current = (await readTelegram()) ?? {};
+
+    // Preserve existing token when caller sends empty (the dashboard
+    // GETs only `token_set`, so a save without re-entering the token
+    // arrives as `token: ""`).
+    const incomingToken =
+      typeof body.token === 'string' ? body.token.trim() : '';
+    const token = incomingToken || current.token || process.env.TELEGRAM_BOT_TOKEN || '';
+    const enabled =
+      body.enabled !== undefined ? Boolean(body.enabled) : current.enabled ?? true;
 
     const updated = {
       ...current,
@@ -43,25 +62,31 @@ export async function PUT(request: Request) {
     };
 
     await writeFile(TELEGRAM_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+    try {
+      await chmod(TELEGRAM_FILE, 0o600);
+    } catch {
+      // chmod can fail on Windows — non-fatal.
+    }
     if (token) process.env.TELEGRAM_BOT_TOKEN = token;
 
     return NextResponse.json({ ok: true, token_set: Boolean(token), enabled });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Error al guardar Telegram' }, { status: 500 });
+    return NextResponse.json(
+      { error: err?.message || 'Error al guardar Telegram' },
+      { status: 500 },
+    );
   }
-}
+});
 
-export async function POST(request: Request) {
+export const POST = authedRoute(async (req: NextRequest) => {
   try {
-    const body = await request.json().catch(() => ({}));
-    let token = body.token?.trim();
+    const body = await req.json().catch(() => ({}));
+    let token = typeof body.token === 'string' ? body.token.trim() : '';
     if (!token) {
-      try {
-        const data = await readFile(TELEGRAM_FILE, 'utf-8');
-        token = JSON.parse(data).token;
-      } catch {}
-      if (!token) token = process.env.TELEGRAM_BOT_TOKEN;
+      const existing = await readTelegram();
+      token = existing?.token || '';
     }
+    if (!token) token = process.env.TELEGRAM_BOT_TOKEN || '';
 
     if (!token) {
       return NextResponse.json({ ok: false, message: 'Token de Telegram no configurado' });
@@ -81,6 +106,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: false, message: data.description || 'Token inválido' });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, message: err.message || 'Fallo de conexión con Telegram' });
+    return NextResponse.json({ ok: false, message: err?.message || 'Fallo de conexión con Telegram' });
   }
-}
+});

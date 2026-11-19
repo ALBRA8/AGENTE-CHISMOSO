@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^13.0.3",
     "mammoth": "^1.13.0",
     "marked": "^18.2.0",
@@ -33,6 +34,7 @@
     "z-ai-web-dev-sdk": "^0.0.18"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.7.0",
     "tsx": "^4.19.0",

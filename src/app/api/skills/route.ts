@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import Database from 'better-sqlite3';
 import type { Database as DB } from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { apiBadRequest, apiOk, apiServerError } from '@/lib/api-response';
 import { authedPOST } from '@/lib/middleware';
 // Silence chismoso's structured logger in this process — otherwise every
@@ -19,8 +19,12 @@ chismosoLogger.setLevel(LogLevel.WARN);
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// Resolve the chismoso DB path from CHISMOSO_DB_PATH or fall back to
+// `<cwd>/chismoso/data/chismoso.db` so the route is portable across dev
+// sandbox, Windows hosts and Docker images (Task FASE-2-DEPS removed
+// the hardcoded absolute literal).
 const DB_PATH =
-  process.env.CHISMOSO_DB_PATH ?? '/home/z/my-project/chismoso/data/chismoso.db';
+  process.env.CHISMOSO_DB_PATH ?? resolve(process.cwd(), 'chismoso', 'data', 'chismoso.db');
 
 // ---------------------------------------------------------------------------
 // Singleton DB connection (survives HMR, never closed)

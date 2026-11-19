@@ -8,9 +8,20 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Directory where the orchestrator persists FICHA markdown files.
- * Mirrors the constant in `chismoso/src/ficha/renderer.ts`.
+ * Mirrors the constant in `chismoso/src/ficha/renderer.ts`. Resolved
+ * from CHISMOSO_FICHAS_DIR (explicit override) or
+ * CHISMOSO_DASHBOARD_ROOT / `process.cwd()` so the route is portable
+ * across dev sandbox, Windows hosts and Docker images (Task
+ * FASE-2-DEPS removed the hardcoded absolute literal).
  */
-const FICHAS_DIR = '/home/z/my-project/download/chismoso/fichas';
+const FICHAS_DIR =
+  process.env.CHISMOSO_FICHAS_DIR ??
+  path.join(
+    process.env.CHISMOSO_DASHBOARD_ROOT ?? process.cwd(),
+    'download',
+    'chismoso',
+    'fichas',
+  );
 
 interface FichaDetailResponse {
   id: string;

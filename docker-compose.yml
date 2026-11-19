@@ -69,7 +69,12 @@ services:
       - CHISMOSO_DB_PATH=/data/chismoso.db
       - CHISMOSO_OUTPUT_DIR=/data/reports
     ports:
-      - "3000:3000"
+      # Task FASE-1-SEC §1.4 — bind to loopback only so the Next.js
+      # server is not reachable directly from the host network. Caddy
+      # (which terminates TLS on 80/443) is the only public edge; the
+      # app's :3000 is reachable inside the chismoso_net Docker network
+      # and from 127.0.0.1 on the host for `curl` debugging.
+      - "127.0.0.1:3000:3000"
     volumes:
       - chismoso_data:/data
       - chismoso_reports:/data/reports

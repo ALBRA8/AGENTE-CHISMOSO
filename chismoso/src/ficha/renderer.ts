@@ -26,6 +26,8 @@
  * without surprises.
  */
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import type { FichaSpec } from './models.js';
 
 // ---------------------------------------------------------------------------
@@ -33,10 +35,42 @@ import type { FichaSpec } from './models.js';
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the directory where rendered FICHA files are persisted.
+ *
+ * Defaults to `<dashboard_root>/download/chismoso/fichas` so it stays
+ * co-located with the rest of CHISMOSO's output. Override with the
+ * `CHISMOSO_FICHAS_DIR` env var when running in Docker / systemd units
+ * that mount a separate volume for FICHAS.
+ *
+ * The dashboard root is computed by walking up from `process.cwd()` until
+ * we find a directory that contains the `chismoso/` subproject (or fall
+ * back to the current working directory if none is found).
+ */
+function resolveFichasDir(): string {
+  const explicit = process.env.CHISMOSO_FICHAS_DIR;
+  if (explicit) return explicit;
+  const dashboardRoot = process.env.CHISMOSO_DASHBOARD_ROOT ?? findDashboardRoot();
+  return path.join(dashboardRoot, 'download', 'chismoso', 'fichas');
+}
+
+function findDashboardRoot(): string {
+  const cwd = process.cwd();
+  // If cwd contains a chismoso/ subdir, cwd IS the dashboard root.
+  if (existsSync(path.join(cwd, 'chismoso', 'package.json'))) {
+    return cwd;
+  }
+  // If cwd itself looks like chismoso/ (contains src/ficha), walk up.
+  if (existsSync(path.join(cwd, 'src', 'ficha'))) {
+    return path.dirname(cwd);
+  }
+  return cwd;
+}
+
+/**
  * The directory where rendered FICHA files are persisted. Centralised
  * here so the orchestrator, CLI and API all agree on the same path.
  */
-export const FICHAS_DIR = '/home/z/my-project/download/chismoso/fichas';
+export const FICHAS_DIR = resolveFichasDir();
 
 /**
  * Filename convention for a persisted FICHA: `ficha-<opportunity_id>.md`.

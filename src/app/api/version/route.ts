@@ -15,7 +15,7 @@
  * Response shape:
  *   {
  *     name: 'AGENTE-CHISMOSO',
- *     version: '1.5.0',
+ *     version: '1.0.0',
  *     build_date: '<ISO>',
  *     git_commit: '<short hash>' | 'dev',
  *     node_version: 'v20.x.x'
@@ -28,7 +28,7 @@ import { apiOk } from '@/lib/api-response';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CHISMOSO_VERSION = '1.5.0';
+const CHISMOSO_VERSION = '1.0.0';
 
 // ---------------------------------------------------------------------------
 // GIT COMMIT (cached at module load — exec'ing git on every request would
@@ -39,8 +39,11 @@ function resolveGitCommit(): string {
   try {
     // --short gives the 7-char hash, plenty for distinguishing deploys.
     // 2-second timeout so a broken git install doesn't hang boot.
+    // We run against process.cwd() so the route works regardless of
+    // where the dashboard is deployed (Task FASE-2-DEPS removed the
+    // hardcoded absolute CWD literal).
     const hash = execSync('git rev-parse --short HEAD', {
-      cwd: '/home/z/my-project',
+      cwd: process.cwd(),
       timeout: 2000,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
