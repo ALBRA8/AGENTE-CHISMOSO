@@ -57,7 +57,7 @@ For more on the CHISMOSO-wide clean-room commitment, see [`docs/CLEAN-ROOM.md`](
 1. **Install REA** in the `chismoso/` workspace:
 
    ```bash
-   cd /home/z/my-project/chismoso
+   cd ./chismoso
    npm install rea-agents
    ```
 
@@ -65,7 +65,7 @@ For more on the CHISMOSO-wide clean-room commitment, see [`docs/CLEAN-ROOM.md`](
 
 2. **Enable REA in MCP config**:
 
-   Edit `/home/z/my-project/chismoso/data/mcp-servers.json` (this file is shipped disabled by default — operators flip `enabled: true` after install):
+   Edit `./chismoso/data/mcp-servers.json` (this file is shipped disabled by default — operators flip `enabled: true` after install):
 
    ```json
    {

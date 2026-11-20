@@ -113,16 +113,16 @@ Subsistemas entregados:
   ¿La confianza aumentó?* (Definición de Done, sección 58).
 
 ### 1.11 Reportes canarios de prueba
-- `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.{md,json}` —
+- `./download/chismoso/report-inv_muvfmcw36y3lps.{md,json}` —
   investigación canónica completa generada por la CLI.
 
 ---
 
 ## 2. WHAT WAS PRESERVED
 
-- El repositorio vacío original en `/home/z/my-project/` se respetó.
-- El archivo `/home/z/my-project/.env` **no fue modificado**.
-- El directorio `/home/z/my-project/skills/` no fue tocado.
+- El repositorio vacío original en `./` se respetó.
+- El archivo `./.env` **no fue modificado**.
+- El directorio `./skills/` no fue tocado.
 - El SDK `z-ai-web-dev-sdk` v0.0.18 instalado globalmente se reutilizó
   **tal cual** (enlace simbólico, no se modificó su código).
 - El historial git se mantiene en "Initial commit" — el proceso de
@@ -136,9 +136,9 @@ Subsistemas entregados:
 
 **Nada preexistente fue modificado.**
 
-Todo el proyecto fue creado desde cero bajo `/home/z/my-project/chismoso/`.
+Todo el proyecto fue creado desde cero bajo `./chismoso/`.
 Adicionalmente se creó un nuevo subdirectorio de entregables:
-`/home/z/my-project/download/chismoso/` con dos archivos (`.md` y `.json`).
+`./download/chismoso/` con dos archivos (`.md` y `.json`).
 
 ---
 
@@ -219,8 +219,8 @@ ni configuraciones del entorno base.
 - `DEFINITION_OF_DONE.md` (otro agente)
 
 ### Entregables externos
-- `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.md`
-- `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.json`
+- `./download/chismoso/report-inv_muvfmcw36y3lps.md`
+- `./download/chismoso/report-inv_muvfmcw36y3lps.json`
 
 **Totales:** 37 archivos `.ts` bajo `src/`+`tests/`+`scripts/` (≈ 4 523 líneas
 de código fuente, excluyendo tests/scripts), 7 archivos de test, 3 scripts,
@@ -232,7 +232,7 @@ de código fuente, excluyendo tests/scripts), 7 archivos de test, 3 scripts,
 
 **Ninguno.**
 
-El proyecto se creó desde cero. El archivo `/home/z/my-project/.env` no fue
+El proyecto se creó desde cero. El archivo `./.env` no fue
 tocado. El SDK `z-ai-web-dev-sdk` se enlazó sin modificar su fuente.
 
 ---
@@ -329,8 +329,8 @@ Diez ADRs tomadas durante el build (ver `docs/ARCHITECTURE.md` para detalle):
 - **Fuentes reales observadas:** `deliverect.com`, `doordash.com`,
   `docusign.com`, `mastercardservices.com`, `reddit.com`, entre otras.
 - **Archivos generados:**
-  - `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.md` (167 líneas).
-  - `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.json` (4 611 líneas).
+  - `./download/chismoso/report-inv_muvfmcw36y3lps.md` (167 líneas).
+  - `./download/chismoso/report-inv_muvfmcw36y3lps.json` (4 611 líneas).
 
 ---
 

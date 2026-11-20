@@ -33,7 +33,7 @@
 # =============================================================================
 set -euo pipefail
 
-DB_PATH="${CHISMOSO_DB_PATH:-/home/z/my-project/chismoso/data/chismoso.db}"
+DB_PATH="${CHISMOSO_DB_PATH:-$(pwd)/chismoso/data/chismoso.db}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/chismoso}"
 BACKUP_LOG="${BACKUP_LOG:-}"
 GPG_RECIPIENT="${BACKUP_GPG_RECIPIENT:-}"

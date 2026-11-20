@@ -27,8 +27,8 @@ All scripts read these env vars from `/opt/chismoso/.env.production`
 
 | Var | Default | Used by |
 |---|---|---|
-| `CHISMOSO_DB_PATH` | `/home/z/my-project/chismoso/data/chismoso.db` | backup, restore |
-| `CHISMOSO_OUTPUT_DIR` | `/home/z/my-project/download/chismoso` | cleanup |
+| `CHISMOSO_DB_PATH` | `./chismoso/data/chismoso.db` | backup, restore |
+| `CHISMOSO_OUTPUT_DIR` | `./download/chismoso` | cleanup |
 | `BACKUP_DIR` | `/var/backups/chismoso` | backup, restore |
 | `BACKUP_LOG` | `/var/log/chismoso/backup.log` | backup |
 | `BACKUP_GPG_RECIPIENT` | *(unset)* | backup (enables encryption when set) |
@@ -92,8 +92,8 @@ sudo /opt/chismoso/scripts/restore-sqlite.sh \
 
 # 5. If the script failed mid-way:
 #    - The .pre-restore.bak file is your safety net. Copy it back:
-#      sudo cp /home/z/my-project/chismoso/data/chismoso.db.pre-restore-*.bak \
-#               /home/z/my-project/chismoso/data/chismoso.db
+#      sudo cp ./chismoso/data/chismoso.db.pre-restore-*.bak \
+#               ./chismoso/data/chismoso.db
 #      sudo systemctl start chismoso
 ```
 

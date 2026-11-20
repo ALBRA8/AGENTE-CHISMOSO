@@ -11,7 +11,7 @@
  * state (no embeddings stored yet).
  *
  * Run:
- *   cd /home/z/my-project/chismoso
+ *   cd ./chismoso
  *   npx tsx scripts/seed-embeddings.ts
  *
  * Re-runnable: uses INSERT OR REPLACE so embeddings for changed signals
@@ -27,7 +27,7 @@ import {
   storeEmbeddings,
 } from '../src/db-extensions/embeddings.sql.js';
 
-const DB_PATH = process.env.CHISMOSO_DB_PATH || '/home/z/my-project/chismoso/data/chismoso.db';
+const DB_PATH = process.env.CHISMOSO_DB_PATH || './chismoso/data/chismoso.db';
 
 interface SignalRow {
   id: string;

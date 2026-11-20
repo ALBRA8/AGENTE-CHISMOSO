@@ -35,7 +35,7 @@
 
 set -euo pipefail
 
-CHISMOSO_DB_PATH="${CHISMOSO_DB_PATH:-/home/z/my-project/chismoso/data/chismoso.db}"
+CHISMOSO_DB_PATH="${CHISMOSO_DB_PATH:-$(pwd)/chismoso/data/chismoso.db}"
 SERVICE_NAME="${CHISMOSO_SERVICE_NAME:-chismoso}"
 BACKUP_LOG="${BACKUP_LOG:-/var/log/chismoso/restore.log}"
 SCHEDULER_SERVICE_NAME="${CHISMOSO_SCHEDULER_SERVICE_NAME:-chismoso-scheduler}"

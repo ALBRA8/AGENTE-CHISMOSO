@@ -46,10 +46,10 @@ Each incident below follows this structure:
 ### Diagnosis
 
 1. `curl /api/readyz` — confirm `checks[0].name === 'db'` is failing.
-2. SSH into the host, run `node /home/z/my-project/chismoso/dist/cli.js
+2. SSH into the host, run `node ./chismoso/dist/cli.js
    doctor --check=database --json`. The doctor prints the exact
    `PRAGMA integrity_check` result.
-3. Inspect the DB file: `ls -la /home/z/my-project/chismoso/data/`.
+3. Inspect the DB file: `ls -la ./chismoso/data/`.
    If `chismoso.db` is much smaller than the last backup, you have
    truncation. If `chismoso.db-wal` is unbounded (>1 GB), the WAL
    checkpoint stalled.
@@ -105,7 +105,7 @@ Each incident below follows this structure:
 2. From the host: `curl -I $LLM_API_BASE` — if the provider is down,
   you'll get a connection error or 5xx.
 3. Check the provider status page (Z.AI: https://status.z.ai).
-4. `node /home/z/my-project/chismoso/dist/cli.js doctor --check=providers`
+4. `node ./chismoso/dist/cli.js doctor --check=providers`
    — surfaces per-provider `success_rate` from the `provider_quality`
    table.
 
@@ -214,7 +214,7 @@ Each incident below follows this structure:
 
 1. **Rollback immediately** — don't try to fix forward:
    ```bash
-   cd /home/z/my-project
+   cd .
    git checkout <previous_release_tag>
    bun run build  # rebuild the standalone server
    systemctl restart chismoso
@@ -297,7 +297,7 @@ Each incident below follows this structure:
 2. `du -sh /var/log/chismoso/*` — find the largest offender.
    Usual culprits: `server.log`, `scheduler.log`, `dev.log`,
    `heapdump-*.heapsnapshot`.
-3. `du -sh /home/z/my-project/download/chismoso` — old investigation
+3. `du -sh ./download/chismoso` — old investigation
    reports accumulate here. Each is ~50-500 KB.
 
 ### Fix procedure
@@ -312,9 +312,9 @@ Each incident below follows this structure:
    audit; this runbook is for when logrotate itself failed.)
 2. Delete old investigation reports:
    ```bash
-   find /home/z/my-project/download/chismoso -name 'report-*.json' \
+   find ./download/chismoso -name 'report-*.json' \
      -mtime +30 -delete
-   find /home/z/my-project/download/chismoso -name 'report-*.md' \
+   find ./download/chismoso -name 'report-*.md' \
      -mtime +30 -delete
    ```
 3. Delete heap snapshots older than 7 days:
@@ -389,7 +389,7 @@ Each incident below follows this structure:
 
 ### Diagnosis
 
-1. Check `busy_timeout`: `sqlite3 /home/z/my-project/chismoso/data/chismoso.db
+1. Check `busy_timeout`: `sqlite3 ./chismoso/data/chismoso.db
    'PRAGMA busy_timeout'` — should return `5000` (5s). If 0, the
    writable singleton lost its pragma.
 2. List in-flight transactions:
@@ -413,7 +413,7 @@ Each incident below follows this structure:
    (The graceful-shutdown hook will clean up the parent's file
    descriptors.)
 3. Check for an orphaned writer: `fuser
-   /home/z/my-project/chismoso/data/chismoso.db` lists PIDs holding
+   ./chismoso/data/chismoso.db` lists PIDs holding
    the file. Kill any process that shouldn't be there.
 4. If the lock contention is persistent, the only long-term fix is
    moving to Postgres. SQLite is single-writer; >3 concurrent

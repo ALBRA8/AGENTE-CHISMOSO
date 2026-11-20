@@ -362,7 +362,7 @@ built-in (`search_web`, `search_community`, `collect_trends`, `deepen_content`).
 
 | Setting               | Valor                                                            |
 |-----------------------|------------------------------------------------------------------|
-| **Path por defecto**  | `/home/z/my-project/chismoso/data/mcp-servers.json`              |
+| **Path por defecto**  | `./chismoso/data/mcp-servers.json`              |
 | **Override**          | env var `CHISMOSO_MCP_CONFIG=/path/to/your-config.json`          |
 | **Si no existe**      | `loadMCPConfig()` retorna `{ servers: {} }` (vacío)             |
 | **Creación inicial** | `chismoso mcp list-servers` materializa el template en disco    |
@@ -680,7 +680,7 @@ razonamiento.
 
 ### Config de ejemplo
 
-Guarda como `/home/z/my-project/chismoso/data/mcp-servers.json`:
+Guarda como `./chismoso/data/mcp-servers.json`:
 
 ```json
 {
@@ -696,7 +696,7 @@ Guarda como `/home/z/my-project/chismoso/data/mcp-servers.json`:
     },
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/z/my-project"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
       "transport": "stdio",
       "enabled": true
     }
@@ -850,7 +850,7 @@ subdirectorio específico, **no** a `/` ni a tu `$HOME`:
 
 ```jsonc
 // ✅ BIEN — sandbox acotado
-"args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/z/my-project/sandbox"]
+"args": ["-y", "@modelcontextprotocol/server-filesystem", "./sandbox"]
 
 // ❌ MAL — acceso a todo el filesystem
 "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"]

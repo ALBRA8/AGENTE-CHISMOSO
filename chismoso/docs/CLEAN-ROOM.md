@@ -74,7 +74,7 @@ The `z-ai-web-dev-sdk` package is an internal Z.ai SDK that is **not installable
 **Honest workaround applied**: replaced the symlink with a `cp -r` of the SDK into the local `node_modules`:
 ```bash
 $ rm -f node_modules/z-ai-web-dev-sdk
-$ cp -r /home/z/.bun/install/global/node_modules/z-ai-web-dev-sdk node_modules/z-ai-web-dev-sdk
+$ cp -r ~/.bun/install/global/node_modules/z-ai-web-dev-sdk node_modules/z-ai-web-dev-sdk
 ```
 This is the only deviation from a 100% isolated clean-room. **Without this SDK, no real provider call is possible** (the SDK is the only way to reach the LLM + web search APIs in this environment). The CLI code itself does not depend on any path outside the project.
 

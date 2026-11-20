@@ -40,7 +40,7 @@ Cada etapa es auditable: cada señal contiene `rawSnippet` y `url` de origen, ca
 ## Instalación
 
 ```bash
-cd /home/z/my-project/chismoso
+cd ./chismoso
 npm install
 npm run build
 ```
@@ -115,7 +115,7 @@ El comando `investigate` siempre imprime el reporte Markdown a **stdout** y los 
 | `CHISMOSO_DB_PATH`     | `data/chismoso.db`                               | Ruta al archivo SQLite (se crea si no existe).                     |
 | `CHISMOSO_LOG_LEVEL`   | `INFO`                                           | Nivel de logging: `DEBUG` \| `INFO` \| `WARN` \| `ERROR`.         |
 | `CHISMOSO_GEOGRAPHY`   | `global`                                         | Geografía por defecto si `--geography` no se pasa.                |
-| `CHISMOSO_OUTPUT_DIR`  | `/home/z/my-project/download/chismoso`           | Directorio donde se guardan los reportes con `--save`.            |
+| `CHISMOSO_OUTPUT_DIR`  | `./download/chismoso`           | Directorio donde se guardan los reportes con `--save`.            |
 
 Ejemplo:
 
@@ -638,12 +638,12 @@ Salida (JSON a stdout):
   "signalsStored": 23,
   "evidenceStored": 23,
   "durationMs": 8341,
-  "extractedTextPath": "/home/z/my-project/download/chismoso/extracted/report.txt"
+  "extractedTextPath": "./download/chismoso/extracted/report.txt"
 }
 ```
 
 El texto extraído se guarda en
-`/home/z/my-project/download/chismoso/extracted/<filename>.txt` para
+`./download/chismoso/extracted/<filename>.txt` para
 inspección (operador puede grep / diff para verificar la extracción).
 
 ### API REST

@@ -34,7 +34,7 @@
  *
  * Para un ejemplo productivo con manejo de errores, listing de resources
  * y reconexión, ver el cliente interno de CHISMOSO en:
- *   /home/z/my-project/chismoso/src/mcp/client.ts
+ *   ./chismoso/src/mcp/client.ts
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

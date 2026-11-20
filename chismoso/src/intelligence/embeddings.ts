@@ -4,7 +4,7 @@
  * BACKGROUND / DECISION LOG
  * ---------------------------
  * The z-ai-web-dev-sdk v0.0.18 (verified by inspecting
- *   /home/z/.bun/install/global/node_modules/z-ai-web-dev-sdk/dist/index.d.ts)
+ *   .bun/install/global/node_modules/z-ai-web-dev-sdk/dist/index.d.ts)
  * exposes ONLY: chat.completions, audio.tts, audio.asr, images.generations,
  *   images.edit, images.search, video.generations, async.result, and
  *   functions.invoke (web_search, page_reader).

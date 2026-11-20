@@ -2,8 +2,8 @@
 
 > Documento generado por el agente **qa-verification** (Task ID 10-d).
 > Verificación ejecutada el `2026-10-05` contra la base de código en
-> `/home/z/my-project/chismoso/` y los reportes de muestra en
-> `/home/z/my-project/download/chismoso/`.
+> `./chismoso/` y los reportes de muestra en
+> `./download/chismoso/`.
 >
 > Especificación de referencia: secciones 57 (CRITERIOS DE TERMINACIÓN),
 > 58 (DEFINITION OF DONE), 39 (TEST DE REALIDAD) y 37 (NO INVENTAR DATOS)
@@ -33,7 +33,7 @@ Estos hallazgos se documentan en la §7 con detalle y se proponen correcciones e
 
 ## 2. Resultados de tests
 
-Ejecución: `cd /home/z/my-project/chismoso && npx vitest run --reporter=verbose 2>&1 | tee /tmp/chismoso-test-output.txt`
+Ejecución: `cd ./chismoso && npx vitest run --reporter=verbose 2>&1 | tee /tmp/chismoso-test-output.txt`
 
 Salida del runner:
 
@@ -76,7 +76,7 @@ Advertencias de runtime observadas:
 
 | Subcriterio                                  | Verificación                                                                                                                                                | Evidencia |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| Separación de responsabilidades              | `src/` contiene subdirectorios distintos: `providers/`, `intelligence/`, `orchestrator/`, `config/`; más `cli.ts`, `db.ts`, `repositories.ts`, `models.ts`, `errors.ts`, `logger.ts`, `index.ts` en la raíz de `src/`. `interfaces/` no existe como subdir pero `cli.ts` cumple el rol de capa de interfaz. | `LS /home/z/my-project/chismoso/src/` |
+| Separación de responsabilidades              | `src/` contiene subdirectorios distintos: `providers/`, `intelligence/`, `orchestrator/`, `config/`; más `cli.ts`, `db.ts`, `repositories.ts`, `models.ts`, `errors.ts`, `logger.ts`, `index.ts` en la raíz de `src/`. `interfaces/` no existe como subdir pero `cli.ts` cumple el rol de capa de interfaz. | `LS ./chismoso/src/` |
 | Providers desacoplados                       | Ningún archivo en `src/providers/` importa de `../intelligence/`, `../orchestrator/` o `../repositories.js`. Sólo importan `./base.js`, `../errors.js`, `../logger.js`, `../models.js`, `z-ai-web-dev-sdk`. | `rg "^import" src/providers/` |
 | Inteligencia separada de acceso a datos      | Ningún archivo en `src/intelligence/` importa `../repositories.js` o `../db.js`. Sólo usan `../models.js` (tipos), `../logger.js`, `./normalizer.js`, `./cross-source.js`, y un `import type { RawItem } from '../providers/base.js'` (TYPE-only, sin runtime dependency). | `rg "^import" src/intelligence/` |
 | Interfaz separada del core                   | `src/cli.ts` sólo importa de `db`, `repositories`, `providers/`, `orchestrator/`, `logger`, `config`, `models` (sólo `generateId`). No contiene lógica de negocio: parsea args, cablea dependencias y delega a `orchestrator.investigate()`. | `src/cli.ts:1-22, 81-132` |
@@ -180,7 +180,7 @@ Notas:
 | Inventar engagement / crecimiento          | ✅ PASS | `Trend.growth`, `Trend.velocity`, `Trend.persistence` se calculan a partir de señales reales (`trends.ts:60-73`); no hay valores hardcoded. |
 | Inventar fuentes                           | ✅ PASS | `Signal.source` y `Evidence.source` se asignan desde `RawItem.providerName` (`normalizer.ts:159, 178`), que viene de los providers concretos (`web_search`, `reddit_communities`, `web_content`, `google_trends`). |
 | Simular respuestas de APIs                 | ✅ PASS | `rg -i "mock\|fake\|dummy\|fixture\|simulat" src/` retorna un único match en `tools.ts:229` que es documentación explícita de **NO** simulación. No hay `nock`, `msw`, ni mocks de `z-ai-web-dev-sdk` en `src/`. |
-| Devolver "datos de ejemplo" como reales     | ✅ PASS | Los reportes de muestra en `/home/z/my-project/download/chismoso/` provienen de la ejecución real de la investigación canónica (inv_muvfmcw36y3lps, generada el `2026-10-05T15:56:28.511Z`). Las URLs en el JSON son reales (deliverect.com, hrsinternational.com, docusign.com, etc.). |
+| Devolver "datos de ejemplo" como reales     | ✅ PASS | Los reportes de muestra en `./download/chismoso/` provienen de la ejecución real de la investigación canónica (inv_muvfmcw36y3lps, generada el `2026-10-05T15:56:28.511Z`). Las URLs en el JSON son reales (deliverect.com, hrsinternational.com, docusign.com, etc.). |
 
 ---
 
@@ -195,7 +195,7 @@ La investigación canónica de referencia:
 
 1. **Como test E2E** en `tests/e2e.test.ts:33-167` ("runs a full investigation end-to-end with REAL providers"). Pasó en 15 323 ms con status `COMPLETED`.
 2. **Como CLI demo** en `src/cli.ts:134-163` (comando `chismoso demo`), que usa el objetivo canónico textual de la sección 58.
-3. **Reporte persistido** en `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.{md,json}` — investigation ID `inv_muvfmcw36y3lps`, generada el `2026-10-05T15:56:28.511Z`.
+3. **Reporte persistido** en `./download/chismoso/report-inv_muvfmcw36y3lps.{md,json}` — investigation ID `inv_muvfmcw36y3lps`, generada el `2026-10-05T15:56:28.511Z`.
 
 ### 6.2 Input
 

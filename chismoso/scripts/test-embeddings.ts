@@ -11,7 +11,7 @@
  *   6. Run semanticSearch against that DB and verify the top results for
  *      a thematic query are members of the expected group.
  *
- * Run: `cd /home/z/my-project/chismoso && npx tsx scripts/test-embeddings.ts`
+ * Run: `cd ./chismoso && npx tsx scripts/test-embeddings.ts`
  *
  * Exit codes:
  *   0 — all assertions passed

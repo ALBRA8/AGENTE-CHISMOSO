@@ -543,7 +543,10 @@ describe('FICHA renderer', () => {
 
 describe('FICHA renderer — FICHAS_DIR + filename convention', () => {
   it('exposes the canonical fichas directory', () => {
-    expect(FICHAS_DIR).toBe('/home/z/my-project/download/chismoso/fichas');
+    // FICHAS_DIR is resolved via resolveFichasDir() which uses env vars
+    // or process.cwd() — it must NOT be a hardcoded absolute path.
+    expect(FICHAS_DIR).not.toContain('/home/z/');
+    expect(FICHAS_DIR.length).toBeGreaterThan(0);
   });
 });
 

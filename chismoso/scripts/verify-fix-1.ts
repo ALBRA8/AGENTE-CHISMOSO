@@ -10,7 +10,7 @@
  * This is a smoke script (not a vitest suite). Mirrors the in-process
  * shape of an orchestrator post-collection step.
  *
- * Run: `cd /home/z/my-project/chismoso && npx tsx scripts/verify-fix-1.ts`
+ * Run: `cd ./chismoso && npx tsx scripts/verify-fix-1.ts`
  */
 import Database from 'better-sqlite3';
 import type { Database as DB } from 'better-sqlite3';

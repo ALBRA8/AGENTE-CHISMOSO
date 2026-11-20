@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-OUTPUT_DIR="${CHISMOSO_OUTPUT_DIR:-/home/z/my-project/download/chismoso}"
+OUTPUT_DIR="${CHISMOSO_OUTPUT_DIR:-$(pwd)/download/chismoso}"
 RETENTION_DAYS="${CHISMOSO_REPORT_RETENTION_DAYS:-30}"
 LOG_FILE="${CHISMOSO_CLEANUP_LOG:-/var/log/chismoso/cleanup.log}"
 

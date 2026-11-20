@@ -84,7 +84,7 @@ trazable a una fuente real.
 
 ### 1.1 CURRENT STATE (estado inicial)
 
-Antes de iniciar CHISMOSO, el directorio `/home/z/my-project/` contenía:
+Antes de iniciar CHISMOSO, el directorio `./` contenía:
 
 - `skills/` — catálogo de habilidades (z-ai-web-dev-sdk wrappers) disponibles
   para invocación por agentes.
@@ -451,7 +451,7 @@ implementada **coinciden**. Resumen:
 #### Created (creados en V1.0)
 
 ```
-/home/z/my-project/chismoso/
+./chismoso/
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts
@@ -507,8 +507,8 @@ implementada **coinciden**. Resumen:
 #### Created by canonical run (output artifacts)
 
 ```
-/home/z/my-project/chismoso/data/chismoso.db          (SQLite, persistente)
-/home/z/my-project/download/chismoso/
+./chismoso/data/chismoso.db          (SQLite, persistente)
+./download/chismoso/
 ├── report-inv_muvfmcw36y3lps.md                      (167 líneas)
 └── report-inv_muvfmcw36y3lps.json                     (machine-readable)
 ```
@@ -1085,10 +1085,10 @@ machine-readable.
 **API pública:**
 - `interface ChismosoConfig { dbPath, logLevel, defaultGeography, outputDir }`.
 - `DEFAULT_CONFIG` con env vars:
-  - `CHISMOSO_DB_PATH` (default `/home/z/my-project/chismoso/data/chismoso.db`).
+  - `CHISMOSO_DB_PATH` (default `./chismoso/data/chismoso.db`).
   - `CHISMOSO_LOG_LEVEL` (default `INFO`).
   - `CHISMOSO_GEOGRAPHY` (default `global`).
-  - `CHISMOSO_OUTPUT_DIR` (default `/home/z/my-project/download/chismoso`).
+  - `CHISMOSO_OUTPUT_DIR` (default `./download/chismoso`).
 - `resolveConfig(overrides?)`.
 - `resolveOutputPath(cfg, filename)`.
 
@@ -1125,7 +1125,7 @@ wiring de dependencias, impresión de reportes.
 
 Esta sección camina paso a paso por la investigación canónica real
 (`inv_muvfmcw36y3lps`) que generó los reportes de referencia en
-`/home/z/my-project/download/chismoso/`.
+`./download/chismoso/`.
 
 ### 3.1 Trigger
 
@@ -1409,8 +1409,8 @@ process.exit(0);
 ```
 
 **Output canonical:**
-- `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.md` (167 líneas).
-- `/home/z/my-project/download/chismoso/report-inv_muvfmcw36y3lps.json` (machine-readable).
+- `./download/chismoso/report-inv_muvfmcw36y3lps.md` (167 líneas).
+- `./download/chismoso/report-inv_muvfmcw36y3lps.json` (machine-readable).
 
 ### 3.15 Diagrama de flujo completo
 
