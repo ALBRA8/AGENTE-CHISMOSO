@@ -85,13 +85,13 @@ describe('FASE-1-SEC §1.1 — protected routes reject unauthenticated callers',
     delete process.env.CHISMOSO_AUTH_HEADER;
     // Tests run with NODE_ENV unset (vitest default) → dev → auth OFF
     // unless explicitly enabled below.
-    delete process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = undefined;
   });
 
   afterEach(() => {
     delete process.env.CHISMOSO_AUTH_ENABLED;
     delete process.env.CHISMOSO_AUTH_TOKENS;
-    delete process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = undefined;
     Object.keys(mockFiles).forEach((k) => delete mockFiles[k]);
   });
 
@@ -187,7 +187,7 @@ describe('FASE-1-SEC §1.2 — GET responses never leak full API keys', () => {
     // Auth disabled in dev so the GET handler runs.
     delete process.env.CHISMOSO_AUTH_ENABLED;
     delete process.env.CHISMOSO_AUTH_TOKENS;
-    delete process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = undefined;
     // Clear env keys so masking falls back to file content only.
     delete process.env.NVIDIA_API_KEY;
     delete process.env.GROQ_API_KEY;
@@ -295,7 +295,7 @@ describe('FASE-1-SEC §1.5 — PUT with empty api_key preserves the existing val
     Object.keys(mockFiles).forEach((k) => delete mockFiles[k]);
     delete process.env.CHISMOSO_AUTH_ENABLED;
     delete process.env.CHISMOSO_AUTH_TOKENS;
-    delete process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = undefined;
     delete process.env.NVIDIA_API_KEY;
     delete process.env.GROQ_API_KEY;
     delete process.env.GOOGLE_API_KEY;
@@ -386,7 +386,7 @@ describe('FASE-1-SEC §1.5 — base_url SSRF validation', () => {
     Object.keys(mockFiles).forEach((k) => delete mockFiles[k]);
     delete process.env.CHISMOSO_AUTH_ENABLED;
     delete process.env.CHISMOSO_AUTH_TOKENS;
-    delete process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = undefined;
     delete process.env.NVIDIA_API_KEY;
     delete process.env.GROQ_API_KEY;
   });
@@ -497,24 +497,24 @@ describe('FASE-1-SEC §1.3 — getAuthConfig fail-closed in production', () => {
   });
 
   afterEach(() => {
-    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalNodeEnv === undefined) (process.env as any).NODE_ENV = undefined;
+    else (process.env as any).NODE_ENV = originalNodeEnv;
     if (originalAuthEnabled === undefined) delete process.env.CHISMOSO_AUTH_ENABLED;
     else process.env.CHISMOSO_AUTH_ENABLED = originalAuthEnabled;
   });
 
   it('defaults auth OFF in development (NODE_ENV unset)', () => {
-    delete process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = undefined;
     expect(getAuthConfig().enabled).toBe(false);
   });
 
   it('defaults auth OFF when NODE_ENV="development"', () => {
-    process.env.NODE_ENV = 'development';
+    (process.env as any).NODE_ENV = "development";
     expect(getAuthConfig().enabled).toBe(false);
   });
 
   it('defaults auth ON in production when CHISMOSO_AUTH_ENABLED is unset', () => {
-    process.env.NODE_ENV = 'production';
+    (process.env as any).NODE_ENV = "production";
     delete process.env.CHISMOSO_AUTH_ENABLED;
     expect(getAuthConfig().enabled).toBe(true);
   });
@@ -522,31 +522,31 @@ describe('FASE-1-SEC §1.3 — getAuthConfig fail-closed in production', () => {
   it('keeps auth ON in production when CHISMOSO_AUTH_ENABLED is empty string (the original bug)', () => {
     // Previously: `enabledEnv === 'true'` → '' === 'true' → false → auth OFF.
     // Now: only explicit 'false' disables in production.
-    process.env.NODE_ENV = 'production';
+    (process.env as any).NODE_ENV = "production";
     process.env.CHISMOSO_AUTH_ENABLED = '';
     expect(getAuthConfig().enabled).toBe(true);
   });
 
   it('keeps auth ON in production when CHISMOSO_AUTH_ENABLED is a typo (e.g. "yes")', () => {
-    process.env.NODE_ENV = 'production';
+    (process.env as any).NODE_ENV = "production";
     process.env.CHISMOSO_AUTH_ENABLED = 'yes';
     expect(getAuthConfig().enabled).toBe(true);
   });
 
   it('keeps auth ON in production when CHISMOSO_AUTH_ENABLED is "1" (numeric truthy)', () => {
-    process.env.NODE_ENV = 'production';
+    (process.env as any).NODE_ENV = "production";
     process.env.CHISMOSO_AUTH_ENABLED = '1';
     expect(getAuthConfig().enabled).toBe(true);
   });
 
   it('only disables auth in production when CHISMOSO_AUTH_ENABLED is the literal "false"', () => {
-    process.env.NODE_ENV = 'production';
+    (process.env as any).NODE_ENV = "production";
     process.env.CHISMOSO_AUTH_ENABLED = 'false';
     expect(getAuthConfig().enabled).toBe(false);
   });
 
   it('honours CHISMOSO_AUTH_ENABLED="true" to enable auth in dev', () => {
-    process.env.NODE_ENV = 'development';
+    (process.env as any).NODE_ENV = "development";
     process.env.CHISMOSO_AUTH_ENABLED = 'true';
     expect(getAuthConfig().enabled).toBe(true);
   });

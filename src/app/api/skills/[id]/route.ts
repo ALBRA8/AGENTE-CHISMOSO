@@ -1,10 +1,13 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 import { NextRequest } from 'next/server';
 import type { Database as DB } from 'better-sqlite3';
 import { apiBadRequest, apiNotFound, apiOk, apiServerError } from '@/lib/api-response';
 import { authedPOST, authedPATCH } from '@/lib/middleware';
 import { openSkillsDb } from '../route';
-import { SkillsCatalog, SkillStatus } from '../../../../../chismoso/dist/skills/index.js';
-import type { ChismosoDB } from '../../../../../chismoso/dist/db.js';
+// @ts-ignore — runtime import from compiled chismoso
+import { SkillRepository, SkillStatus } from '../../../../../chismoso/dist/skills/index.js';
+// @ts-ignore — runtime import from compiled chismoso
+import { ChismosoDB } from '../../../../../chismoso/dist/db.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

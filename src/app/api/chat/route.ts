@@ -57,7 +57,6 @@
  */
 
 import { NextRequest } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
 import {
   createSession,
   getSession,
@@ -68,6 +67,22 @@ import {
 import { getClientIP, rateLimit } from '@/lib/rate-limit';
 import { optionalAuth, getAuthStatus } from '@/lib/middleware';
 import { getChatTool, toolsForPrompt } from './tools';
+
+// ZAI SDK loaded dynamically — the motor works without it via external
+// providers (Groq/NVIDIA/OpenAI). This import is optional.
+let zaiPromise: Promise<any> | null = null;
+async function getZAI(): Promise<any> {
+  if (!zaiPromise) {
+    try {
+      const ZAIModule = await import('z-ai-web-dev-sdk');
+      const ZAI = ZAIModule.default;
+      zaiPromise = ZAI.create();
+    } catch {
+      throw new Error('LLM unavailable: z-ai-web-dev-sdk not installed. Configure GROQ_API_KEY, NVIDIA_API_KEY, or OPENAI_API_KEY as alternative.');
+    }
+  }
+  return zaiPromise;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -91,17 +106,6 @@ const CHAT_RATE_LIMIT = { windowMs: 60_000, maxRequests: 20 };
 
 /** Delay (ms) between SSE token chunks for the typing feel. */
 const TOKEN_STREAM_DELAY_MS = 12;
-
-// ---------------------------------------------------------------------------
-// ZAI singleton (lazy — first call pays the create() cost, subsequent calls
-// reuse the cached promise). Same pattern as chismoso LLMClient.
-// ---------------------------------------------------------------------------
-
-let zaiPromise: Promise<ZAI> | null = null;
-function getZAI(): Promise<ZAI> {
-  if (!zaiPromise) zaiPromise = ZAI.create();
-  return zaiPromise;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers

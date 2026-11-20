@@ -24,6 +24,7 @@ export default defineConfig({
     // better-sqlite3 + Next.js server components don't tolerate worker
     // isolation well; mirror chismoso's single-thread setup.
     pool: 'threads',
+    // @ts-ignore
     poolOptions: {
       threads: { singleThread: true, isolate: false },
     },

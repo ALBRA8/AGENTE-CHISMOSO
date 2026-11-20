@@ -452,8 +452,9 @@ export class DocumentProvider implements IProvider {
     const raw = await readFile(filePath, 'utf8');
     if (raw.length < 500) return raw;
     try {
-      const { marked } = await import('marked');
-      const tokens = marked.lexer(raw);
+      const markedModule: any = await import('marked');
+      const marked: any = markedModule.default ?? markedModule;
+      const tokens: any[] = marked?.lexer?.lex?.(raw) ?? marked?.lex?.(raw) ?? [];
       // Walk the token tree and collect text-bearing leaves.
       const parts: string[] = [];
       const walk = (tok: any): void => {

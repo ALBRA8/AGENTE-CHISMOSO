@@ -1,6 +1,20 @@
-import ZAI from 'z-ai-web-dev-sdk';
+/**
+ * Smoke test for z-ai-web-dev-sdk.
+ * This script ONLY runs if the SDK is installed. It's optional.
+ * Run: cd chismoso && npx tsx scripts/smoke.ts
+ */
 
 async function smoke() {
+  let ZAI: any;
+  try {
+    const mod = await import('z-ai-web-dev-sdk');
+    ZAI = mod.default;
+  } catch {
+    console.error('[SKIP] z-ai-web-dev-sdk not installed. This smoke test requires it.');
+    console.error('       The motor works without it via external providers (Serper/Groq/etc).');
+    process.exit(0);
+  }
+
   console.log('[1/3] Creating ZAI instance...');
   const zai = await ZAI.create();
 

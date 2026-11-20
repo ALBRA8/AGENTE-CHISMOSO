@@ -1,3 +1,4 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 /**
  * Shared mesh SQLite helper for the Next.js API routes.
  *

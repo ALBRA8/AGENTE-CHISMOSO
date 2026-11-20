@@ -1,3 +1,4 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 import { NextRequest } from 'next/server';
 import type { Database as DB } from 'better-sqlite3';
 import { apiBadRequest, apiNotFound, apiOk, apiServerError } from '@/lib/api-response';

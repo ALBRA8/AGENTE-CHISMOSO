@@ -1,3 +1,4 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';

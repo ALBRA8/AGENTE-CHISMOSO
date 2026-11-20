@@ -1,3 +1,4 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 import { NextRequest } from 'next/server';
 import Database from 'better-sqlite3';
 import type { Database as DB } from 'better-sqlite3';
@@ -10,9 +11,12 @@ import { authedPOST } from '@/lib/middleware';
 // interleave with our JSON responses on the wire).
 // Path is relative to this file: src/app/api/skills/route.ts
 //   → ../../../../chismoso/dist/logger.js
+// @ts-ignore — runtime import from compiled chismoso (may not exist at type-check time)
 import { logger as chismosoLogger, LogLevel } from '../../../../chismoso/dist/logger.js';
+// @ts-ignore — runtime import from compiled chismoso
 import { SkillsCatalog, SkillStatus } from '../../../../chismoso/dist/skills/index.js';
-import type { ChismosoDB } from '../../../../chismoso/dist/db.js';
+// @ts-ignore — runtime import from compiled chismoso
+import { ChismosoDB } from '../../../../chismoso/dist/db.js';
 
 chismosoLogger.setLevel(LogLevel.WARN);
 

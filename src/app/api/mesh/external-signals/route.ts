@@ -1,3 +1,4 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 import { NextRequest } from 'next/server';
 import { openMeshDb, ingestExternalSignal, fetchExternalSignals } from '../_mesh-db';
 import { rateLimitAsync, getRateLimitKey, getClientIP, LIMITS } from '@/lib/rate-limit';

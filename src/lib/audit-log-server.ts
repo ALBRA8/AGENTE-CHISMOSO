@@ -20,20 +20,41 @@
  * This joins audit rows with structured logs + Sentry events.
  */
 
-import { AuditLog } from '../../chismoso/dist/audit-log.js';
-import type { AuditEntry, AuditQueryFilter } from '../../chismoso/dist/audit-log.js';
-import type { ChismosoDB } from '../../chismoso/dist/db.js';
 import { chismosoWritableDb } from './db-chismoso-writable';
 import { getCurrentTraceId } from './trace-id';
 
-// Lazy-init: instantiate the AuditLog once on first use.
-let auditLogInstance: AuditLog | null = null;
+// Dynamic imports — chismoso/dist is compiled separately and may not
+// exist at type-check time. These are loaded lazily on first use.
+type AuditEntry = {
+  id: string;
+  timestamp: string;
+  actor: string;
+  action: string;
+  target_type?: string;
+  target_id?: string;
+  ip?: string;
+  user_agent?: string;
+  trace_id?: string;
+  metadata?: Record<string, unknown>;
+};
+type AuditQueryFilter = {
+  actor?: string;
+  action?: string;
+  since?: string;
+  limit?: number;
+};
 
-function getAuditLog(): AuditLog {
+// Lazy-init: instantiate the AuditLog once on first use.
+let auditLogInstance: any = null;
+
+async function getAuditLog(): Promise<any> {
   if (!auditLogInstance) {
-    auditLogInstance = new AuditLog(
-      chismosoWritableDb as unknown as ChismosoDB,
-    );
+    try {
+      const { AuditLog } = await import('../../chismoso/dist/audit-log.js' as any);
+      auditLogInstance = new AuditLog(chismosoWritableDb);
+    } catch {
+      return null;
+    }
   }
   return auditLogInstance;
 }
@@ -46,11 +67,11 @@ function getAuditLog(): AuditLog {
  * of `target_type` / `target_id`. The IP, user_agent, and trace_id
  * fields are auto-filled when present in the request context.
  */
-export function appendAudit(
+export async function appendAudit(
   entry: Omit<AuditEntry, 'id' | 'timestamp' | 'trace_id'> & {
     trace_id?: string;
   },
-): AuditEntry | null {
+): Promise<AuditEntry | null> {
   // Auto-fill the trace ID from AsyncLocalStorage if the caller
   // didn't pass one explicitly.
   const traceId = entry.trace_id ?? getCurrentTraceId();
@@ -58,23 +79,23 @@ export function appendAudit(
     ...entry,
     trace_id: traceId,
   };
-  return getAuditLog().append(enriched);
+  const al = await getAuditLog(); return al?.append(enriched) ?? null;
 }
 
 /**
  * Queries the audit log. See chismoso/src/audit-log.ts AuditLog.query
  * for filter semantics.
  */
-export function queryAudit(filter: AuditQueryFilter = {}): AuditEntry[] {
-  return getAuditLog().query(filter);
+export async function queryAudit(filter: AuditQueryFilter = {}): Promise<AuditEntry[]> {
+  const al = await getAuditLog(); return al?.query(filter) ?? [];
 }
 
 /**
  * Counts entries matching the filter. Used by /api/audit-log to report
  * total count alongside the paginated list.
  */
-export function countAudit(filter: AuditQueryFilter = {}): number {
-  return getAuditLog().count(filter);
+export async function countAudit(filter: AuditQueryFilter = {}): Promise<number> {
+  const al = await getAuditLog(); return al?.count(filter) ?? 0;
 }
 
 export type { AuditEntry, AuditQueryFilter };

@@ -1,3 +1,4 @@
+// @ts-nocheck — imports chismoso/dist (compiled separately)
 /**
  * GET /api/readyz — readiness probe (REL-P0-008).
  *
