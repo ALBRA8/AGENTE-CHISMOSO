@@ -8,6 +8,37 @@ Serper response (no network, no API keys) and reports the §3.1
 relevance filter rate, §3.4 unique trend count, and §3.6/§3.7
 concrete + V1-validated opportunity count.
 
+> ## DISCLAIMER — fixture-based results do NOT prove real-world quality
+>
+> The numbers in this report are produced from **fixed Serper fixtures**
+> (`tests/fixtures/serper-*.json`) and a **deterministic local embedding
+> model** (TF-IDF hash, no network). They measure the **internal
+> consistency** of the intelligence pipeline (relevance filtering, trend
+> dedup, opportunity schema validation) against canned inputs — they do
+> **NOT** measure how well CHISMOSO performs against the live web.
+>
+> Concretely, these results do **not** prove:
+> - that real Serper queries for these objectives would return similar
+>   signals (fixtures were hand-curated to exercise specific pipeline
+>   paths);
+> - that the trend names / opportunities generated are accurate or
+>   actionable against current market reality;
+> - that the relevance scorer's 100%-pass rate generalises (see
+>   `tests/fixtures/noise-signals.json` + `tests/relevance-noise.test.ts`
+>   for the complementary negative-test that proves the scorer *does*
+>   filter deliberately irrelevant signals);
+> - that the TF-IDF hash embedding model behaves the same as a real
+>   embedding API (semantic clustering quality depends on the embedding
+>   model — see the threshold-tuning notes in
+>   `chismoso/src/intelligence/semantic-cluster.ts`).
+>
+> To validate real-world quality, run the E2E test
+> (`chismoso/tests/e2e.test.ts`) with `SERPER_API_KEY` and
+> `GROQ_API_KEY` set — that test executes the canonical investigation
+> against the live web. Until that is done, treat the numbers below as
+> **pipeline-shape validation only**, not as evidence of real-world
+> intelligence quality.
+
 ## Summary table
 
 | Objective | Raw signals | Relevant % | Discarded | Unique trends | Dup names | Concrete opps | Weak opps | V1 valid | V1 invalid |

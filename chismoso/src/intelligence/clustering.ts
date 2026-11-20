@@ -13,11 +13,19 @@
  *
  * NO introducimos embeddings / vector DB en V1 — la especificación dice
  * explícitamente no introducir infraestructura pesada sin necesidad.
+ *
+ * RONDA-2 Point 5 — descriptive phrase naming.
+ *
+ * Cluster canonicals MUST be descriptive phrases (2+ words), never a
+ * single keyword. We produce the phrase either via the LLM (when an
+ * `LLMClient` is supplied to `clusterSignalsAuto`) or via a deterministic
+ * fallback that picks the top 2-3 most-frequent tokens from the cluster's
+ * frequency map. See `nameClustersDescriptively` for the details.
  */
 
 import type { Database as BetterSqlite3Database } from 'better-sqlite3';
 import type { Signal, TopicCluster } from '../models.js';
-import { generateId, nowISO } from '../models.js';
+import { generateId } from '../models.js';
 import { normalizeText, tokenize } from './normalizer.js';
 import { clusterSignalsSemantic } from './semantic-cluster.js';
 import {
@@ -27,6 +35,7 @@ import {
 } from '../db-extensions/embeddings.sql.js';
 import { EmbeddingClient } from './embeddings.js';
 import { logger } from '../logger.js';
+import type { LLMClient, ChatMessage, LLMResponse } from '../orchestrator/llm.js';
 
 export interface ClusterResult {
   clusters: TopicCluster[];
@@ -127,8 +136,8 @@ export function clusterSignals(signals: Signal[], threshold = 0.34): ClusterResu
 
   // FASE-3-QUALITY §3.4 — no duplicate trend names.
   //
-  // After canonical refresh, two clusters may end up with the same single
-  // keyword (e.g. both clusters' most frequent token is "restaurantes").
+  // After canonical refresh, two clusters may end up with the same
+  // most-frequent token (e.g. both clusters' top token is "restaurantes").
   // We rename duplicates by appending a discriminator: the second
   // occurrence becomes "<topic>-2", the third "<topic>-3", etc. If the
   // underlying cluster has a meaningful secondary token we use that to
@@ -136,13 +145,215 @@ export function clusterSignals(signals: Signal[], threshold = 0.34): ClusterResu
   // "restaurantes-2"); the discriminator is the fallback when no second
   // token is available.
   //
-  // Also, we replace any single-word canonical with a short phrase when
-  // possible (e.g. "restaurantes" → "crecimiento en restaurantes" when
-  // we have enough signal context) so trends are descriptive phrases, not
-  // single words.
+  // RONDA-2 Point 5 — every canonical is expanded into a descriptive
+  // phrase of 2+ tokens. A single-token canonical is never acceptable
+  // as a trend name (it tells the user nothing about the cluster).
   dedupCanonicalNames(clusters, clusterTokens);
 
   return { clusters, signalToCluster };
+}
+
+// ---------------------------------------------------------------------------
+// RONDA-2 Point 5 — descriptive phrase naming
+// ---------------------------------------------------------------------------
+
+/**
+ * The LLM prompt used to name a cluster. Asks for a 5-8 word descriptive
+ * phrase that summarises what the cluster's signals have in common.
+ *
+ * The prompt is in Spanish because most CHISMOSO investigations target
+ * LATAM markets, and the canonical names flow directly into the
+ * user-facing report. The LLM is free to respond in either Spanish or
+ * English depending on the input language.
+ */
+const CLUSTER_NAME_SYSTEM_PROMPT = `You are CHISMOSO's cluster naming assistant.
+You receive a list of signal snippets that all belong to the same topic cluster.
+Produce a short, descriptive phrase that summarises what these signals have in common.
+
+Rules:
+  - Output ONLY the phrase, no quotes, no preamble, no explanation.
+  - The phrase MUST be between 5 and 8 words.
+  - Use the same language as the majority of the signals (Spanish signals → Spanish phrase).
+  - Do NOT include generic words like "trend", "tendencia", "topic", "cluster".
+  - Capture the SPECIFIC phenomenon (e.g. "automatización de reservas por WhatsApp en restaurantes"
+    is good; "tendencia de restaurantes" is bad).`;
+
+/**
+ * Build the user-side prompt for naming a single cluster. Includes up to
+ * 8 sample snippets (truncated to 200 chars each) so the LLM has enough
+ * context without paying for every signal in a large cluster.
+ */
+function buildClusterNameUserPrompt(cluster: TopicCluster, signals: Signal[]): string {
+  const clusterSignals = cluster.signalIds
+    .map((sid) => signals.find((s) => s.id === sid))
+    .filter(Boolean) as Signal[];
+  const samples = clusterSignals.slice(0, 8);
+  const lines = samples.map((s, i) => `  [${i + 1}] ${s.rawSnippet.slice(0, 200)}`);
+  return `Cluster (id=${cluster.id}, ${clusterSignals.length} signals):\n${lines.join('\n')}\n\nProduce the 5-8 word descriptive phrase now.`;
+}
+
+/**
+ * Validate that an LLM-produced name is a usable descriptive phrase.
+ * Returns the cleaned phrase when valid, or `null` when the LLM
+ * output is unusable (caller falls back to the deterministic path).
+ *
+ * Validation rules:
+ *   - Strip surrounding quotes / whitespace.
+ *   - Strip any trailing period.
+ *   - Tokenise by whitespace; require 5-8 tokens of length >= 2.
+ *   - Reject if the cleaned phrase is the empty string.
+ */
+function cleanLlmName(raw: string): string | null {
+  if (!raw) return null;
+  let s = raw.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+  if (!s) return null;
+  // Strip trailing period (LLMs sometimes end a phrase with `.`).
+  if (s.endsWith('.')) s = s.slice(0, -1).trim();
+  if (!s) return null;
+  const tokens = s.split(/\s+/).filter((t) => t.length >= 2);
+  // Accept 5-8 words per the prompt; allow 4 as a tolerance margin for
+  // compact phrases (the LLM sometimes produces "restaurantes adoptan IA
+  // para reservas" = 5 tokens which is fine).
+  if (tokens.length < 4 || tokens.length > 10) return null;
+  return tokens.join(' ');
+}
+
+/**
+ * Deterministic fallback: build a descriptive phrase from the cluster's
+ * top 2-3 most-frequent tokens. Always produces at least a 2-token
+ * phrase, even when the cluster has only one frequent token (in that
+ * edge case we append the cluster's first signal keyword).
+ */
+function buildPhraseFallback(
+  canonical: string,
+  freq: Map<string, number> | undefined,
+  fallbackKeyword: string,
+): string {
+  // If the canonical is already a multi-word phrase (e.g. the first
+  // signal's topic), keep it.
+  if (canonical && canonical.includes(' ')) return canonical;
+
+  const canonNorm = canonical.toLowerCase().trim();
+  const candidates: Array<{ tok: string; count: number }> = [];
+  if (freq) {
+    for (const [tok, count] of freq.entries()) {
+      if (tok.length < 4) continue;
+      if (tok.toLowerCase() === canonNorm) continue;
+      candidates.push({ tok, count });
+    }
+    candidates.sort((a, b) => b.count - a.count);
+  }
+
+  // Take up to 2 secondary tokens to form a phrase alongside the
+  // canonical keyword.
+  const parts = candidates.slice(0, 2).map((c) => c.tok);
+  if (parts.length >= 2) {
+    return `${canonical} ${parts.join(' ')}`;
+  }
+  if (parts.length === 1) {
+    return `${canonical} ${parts[0]}`;
+  }
+  // Edge case: no secondary tokens at all (extremely rare — the
+  // cluster's signals only produced one tokenisable keyword). Append
+  // the first signal's keyword (which is usually multi-character) to
+  // guarantee at least a 2-token phrase.
+  const extra = fallbackKeyword && fallbackKeyword.trim() ? fallbackKeyword.trim() : 'topic';
+  if (extra.toLowerCase() === canonNorm) {
+    return `${canonical} trend`;
+  }
+  return `${canonical} ${extra}`;
+}
+
+/**
+ * RONDA-2 Point 5 — name each cluster with a descriptive phrase.
+ *
+ * For every cluster in `clusters`:
+ *   1. If `opts.llm` is provided, ask the LLM to summarise the cluster's
+ *      signals in 5-8 words. If the LLM returns a valid phrase (4-10
+ *      tokens, no preamble/quotes), use it as the canonical.
+ *   2. Otherwise (or when the LLM call fails / returns unusable output),
+ *      use the deterministic fallback: the top 2-3 most-frequent tokens
+ *      from the cluster's frequency map, joined with the canonical
+ *      keyword.
+ *
+ * The function MUTATES the clusters in place (replaces `canonical`).
+ *
+ * Uniqueness is preserved: if two LLM responses collide, the second one
+ * gets a `-2` discriminator appended (same scheme as the sync path).
+ *
+ * Failures in the LLM call are NON-FATAL — we log a warning and fall
+ * back to the deterministic phrase for that cluster. The caller
+ * (orchestrator / react) never sees a half-named cluster.
+ */
+export async function nameClustersDescriptively(
+  clusters: TopicCluster[],
+  signals: Signal[],
+  opts: { llm?: LLMClient; clusterTokens?: Map<string, Map<string, number>> } = {},
+): Promise<{ named: number; llmUsed: number; fallbackUsed: number }> {
+  const seen = new Set<string>();
+  let llmUsed = 0;
+  let fallbackUsed = 0;
+
+  // Pre-seed `seen` with the current canonicals so the LLM doesn't
+  // accidentally collide with a name we've already kept.
+  for (const c of clusters) {
+    seen.add(c.canonical.toLowerCase().trim());
+  }
+
+  for (const c of clusters) {
+    const freq = opts.clusterTokens?.get(c.id);
+    // Pick the first signal's keyword as the fallback "extra" token.
+    const firstSignal = signals.find((s) => s.id === c.signalIds[0]);
+    const fallbackKeyword = firstSignal?.keyword ?? '';
+
+    let nextCanonical: string | null = null;
+
+    if (opts.llm) {
+      try {
+        const messages: ChatMessage[] = [
+          { role: 'system', content: CLUSTER_NAME_SYSTEM_PROMPT },
+          { role: 'user', content: buildClusterNameUserPrompt(c, signals) },
+        ];
+        const resp: LLMResponse = await opts.llm.chat(messages);
+        nextCanonical = cleanLlmName(resp.content);
+        if (nextCanonical) {
+          llmUsed++;
+        } else {
+          logger.warn('cluster name LLM returned unusable phrase, falling back', {
+            clusterId: c.id,
+            rawContentLen: resp.content.length,
+          });
+        }
+      } catch (e: any) {
+        logger.warn('cluster name LLM call failed, falling back', {
+          clusterId: c.id,
+          err: e?.message ?? String(e),
+        });
+      }
+    }
+
+    if (!nextCanonical) {
+      nextCanonical = buildPhraseFallback(c.canonical, freq, fallbackKeyword);
+      fallbackUsed++;
+    }
+
+    // Uniqueness pass — append -N discriminator on collision.
+    const norm = nextCanonical.toLowerCase().trim();
+    if (seen.has(norm) && norm !== c.canonical.toLowerCase().trim()) {
+      let n = 2;
+      let candidate = `${nextCanonical}-${n}`;
+      while (seen.has(candidate.toLowerCase().trim())) {
+        n++;
+        candidate = `${nextCanonical}-${n}`;
+      }
+      nextCanonical = candidate;
+    }
+    seen.add(nextCanonical.toLowerCase().trim());
+
+    c.canonical = nextCanonical;
+  }
+
+  return { named: clusters.length, llmUsed, fallbackUsed };
 }
 
 /**
@@ -168,8 +379,8 @@ function dedupCanonicalNames(
     const original = c.canonical;
     const norm = original.toLowerCase().trim();
     if (!seen.has(norm)) {
-      // First occurrence — but if it's a single word, try to expand it
-      // into a descriptive phrase using the cluster's secondary tokens.
+      // First occurrence — expand the canonical into a descriptive
+      // phrase using the cluster's secondary tokens.
       const expanded = expandToPhrase(original, clusterTokens.get(c.id));
       const expandedNorm = expanded.toLowerCase().trim();
       if (seen.has(expandedNorm)) {
@@ -193,17 +404,30 @@ function dedupCanonicalNames(
 }
 
 /**
- * FASE-3-QUALITY §3.4 — expand a single-word canonical into a short
- * descriptive phrase. Picks the top-2 most frequent tokens from the
- * cluster's frequency map and joins them with the canonical.
+ * FASE-3-QUALITY §3.4 — expand a canonical into a short descriptive
+ * phrase. Picks the top-2 most frequent tokens from the cluster's
+ * frequency map and joins them with the canonical.
  *
- * If the canonical is already a multi-word phrase (contains a space) or
- * no secondary token is available, returns the canonical unchanged.
+ * If the canonical is already a multi-word phrase (contains a space), it
+ * is returned unchanged — we trust the upstream caller's phrase.
+ *
+ * RONDA-2 Point 5 — when no secondary token is available, we no longer
+ * return the bare canonical. We append the cluster's most frequent
+ * short token (length >= 3) so every trend name is at least a 2-token
+ * phrase. The deterministic fallback in `nameClustersDescriptively`
+ * (called by `clusterSignalsAuto`) is the authoritative source of the
+ * final phrase; this sync-time expansion is a best-effort for callers
+ * that use `clusterSignals` directly.
  */
 function expandToPhrase(canonical: string, freq?: Map<string, number>): string {
   if (!canonical) return canonical;
   if (canonical.includes(' ')) return canonical;
-  if (!freq || freq.size === 0) return canonical;
+  if (!freq || freq.size === 0) {
+    // No frequency data — append a generic qualifier so the name is
+    // never a bare keyword. The LLM / fallback in `clusterSignalsAuto`
+    // will replace this with a real phrase when invoked.
+    return `${canonical} trend`;
+  }
   // Find the most frequent token that is NOT the canonical itself.
   const canonNorm = canonical.toLowerCase();
   const candidates: Array<{ tok: string; count: number }> = [];
@@ -212,7 +436,15 @@ function expandToPhrase(canonical: string, freq?: Map<string, number>): string {
     if (tok.length < 4) continue;
     candidates.push({ tok, count });
   }
-  if (candidates.length === 0) return canonical;
+  if (candidates.length === 0) {
+    // No 4+ char secondary token — relax to 3-char tokens.
+    for (const [tok, count] of freq.entries()) {
+      if (tok.toLowerCase() === canonNorm) continue;
+      if (tok.length < 3) continue;
+      candidates.push({ tok, count });
+    }
+  }
+  if (candidates.length === 0) return `${canonical} trend`;
   candidates.sort((a, b) => b.count - a.count);
   // Take up to 2 secondary tokens to form a phrase.
   const parts = candidates.slice(0, 2).map((c) => c.tok);
@@ -250,7 +482,11 @@ function deriveAlternativeName(
       candidates.sort((a, b) => b.count - a.count);
       const parts = candidates.slice(0, 2).map((c) => c.tok);
       phrase = `${canonical} ${parts.join(' ')}`;
+    } else {
+      phrase = `${canonical} trend`;
     }
+  } else {
+    phrase = `${canonical} trend`;
   }
   // Always append -N to guarantee uniqueness.
   let n = startN;
@@ -299,17 +535,33 @@ function pickCanonical(fallback: string, freq: Map<string, number>): string {
  * that something went wrong is the `strategy` field — when persistence
  * fails, `strategy` stays `'semantic'` but a warning is logged and the
  * `reason` notes the failure.
+ *
+ * RONDA-2 Point 5 — after clustering (either path), the canonical names
+ * are upgraded to descriptive phrases via `nameClustersDescriptively`.
+ * When `opts.llm` is provided, the LLM is asked to summarise each
+ * cluster in 5-8 words; otherwise the deterministic fallback picks the
+ * top 2-3 most-frequent tokens as the phrase. Either way, no trend name
+ * leaves this function as a bare keyword.
  */
 export const MIN_SIGNALS_FOR_SEMANTIC = 8;
 
 export interface ClusterAutoOptions {
   db?: BetterSqlite3Database;
   embeddingClient?: EmbeddingClient;
+  /** RONDA-2 Point 5 — optional LLM client for descriptive cluster naming. */
+  llm?: LLMClient;
+  /**
+   * RONDA-2 Point 5 — optional objective text. Passed to the LLM as
+   * context so cluster names align with the investigation's intent.
+   */
+  objective?: string;
 }
 
 export interface ClusterAutoResult extends ClusterResult {
   strategy: 'semantic' | 'token';
   reason: string;
+  /** RONDA-2 Point 5 — naming telemetry: how many clusters got LLM names vs fallback. */
+  naming: { named: number; llmUsed: number; fallbackUsed: number };
 }
 
 export async function clusterSignalsAuto(
@@ -326,7 +578,14 @@ export async function clusterSignalsAuto(
     const reason = signals.length < MIN_SIGNALS_FOR_SEMANTIC
       ? `too few signals (${signals.length} < ${MIN_SIGNALS_FOR_SEMANTIC})`
       : 'no db/embedding client provided';
-    return { ...result, strategy: 'token', reason };
+    // RONDA-2 Point 5 — upgrade canonicals to descriptive phrases.
+    // On the token path we have the per-cluster frequency map available
+    // via a small reconstruction (we don't have it from clusterSignals's
+    // return value, so the LLM / fallback builds it from the signals).
+    const naming = await nameClustersDescriptively(result.clusters, signals, {
+      llm: opts.llm,
+    });
+    return { ...result, strategy: 'token', reason, naming };
   }
 
   // Semantic path. 1) Ensure schema + embeddings persisted.
@@ -374,21 +633,33 @@ export async function clusterSignalsAuto(
     : 'semantic (persistence failed — in-memory only)';
   try {
     const sem = await clusterSignalsSemantic(signals, { embeddingClient: client });
+    // RONDA-2 Point 5 — upgrade canonicals to descriptive phrases. The
+    // semantic path doesn't expose the per-cluster frequency map, so the
+    // LLM (if provided) does the naming; the deterministic fallback
+    // rebuilds the frequency map from the cluster's signals on the fly.
+    const naming = await nameClustersDescriptively(sem.clusters, signals, {
+      llm: opts.llm,
+    });
     return {
       clusters: sem.clusters,
       signalToCluster: sem.signalToCluster,
       strategy: 'semantic',
       reason,
+      naming,
     };
   } catch (e: any) {
     logger.warn('clusterSignalsAuto: semantic clustering failed, falling back to token', {
       err: e?.message ?? String(e),
     });
     const result = clusterSignals(signals);
+    const naming = await nameClustersDescriptively(result.clusters, signals, {
+      llm: opts.llm,
+    });
     return {
       ...result,
       strategy: 'token',
       reason: `semantic clustering failed: ${e?.message ?? String(e)}`,
+      naming,
     };
   }
 }

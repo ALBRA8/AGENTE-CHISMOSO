@@ -1,0 +1,38 @@
+{
+  "searchParameters": {
+    "q": "oportunidades de negocio restaurantes Colombia",
+    "gl": "co",
+    "hl": "es",
+    "num": 3,
+    "type": "search",
+    "fixturePurpose": "RONDA-2 Point 4 — deliberately irrelevant signals used to validate the relevance scorer (FASE-3-QUALITY §3.1). None of these signals should survive the relevance filter for the restaurants-in-Colombia objective.",
+    "noiseCategories": [
+      "off-topic (school bullying — no restaurant / business overlap)",
+      "stale (2019 publication date — well past the 90-day relevance decay window)",
+      "wrong-geography (US-based .com domain, no Colombia signal)"
+    ]
+  },
+  "organic": [
+    {
+      "title": "Bullying escolar: cómo prevenir el acoso en escuelas primarias",
+      "link": "https://www.educacionycultura.com/bullying-escolar-prevencion-acoso",
+      "snippet": "El acoso escolar afecta a millones de niños en escuelas primarias. Estrategias para prevenir el bullying incluyen programas de mediación entre pares, capacitación docente y protocols de intervención. Los casos severos requieren acompañamiento psicológico.",
+      "position": 1,
+      "date": "2025-09-15"
+    },
+    {
+      "title": "Restaurantes en Colombia: crecimiento del sector 2019",
+      "link": "https://www.eltiempo.com/economia/restaurantes-colombia-crecimiento-2019",
+      "snippet": "El sector de restaurantes en Colombia creció 8% en 2019 según el DANE. Los datos históricos muestran un mercado estable pero sin cambios disruptivos. Análisis retrospectivo de la gastronomía colombiana de hace seis años.",
+      "position": 2,
+      "date": "2019-03-10"
+    },
+    {
+      "title": "Best restaurant POS systems in the United States 2025",
+      "link": "https://www.restaurantbusinessonline.com/pos-systems-usa-2025",
+      "snippet": "Comparison of the top point-of-sale systems for restaurants in the United States. Toast, Square for Restaurants, and TouchBistro dominate the US market. Pricing starts at $69/month. Geared toward US-based franchise operators.",
+      "position": 3,
+      "date": "2025-08-22"
+    }
+  ]
+}

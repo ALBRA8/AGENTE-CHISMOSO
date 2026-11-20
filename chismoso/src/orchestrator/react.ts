@@ -661,9 +661,13 @@ export class ReActOrchestrator {
         // Don't fail the investigation — embeddings are nice-to-have.
       }
 
-      const { clusters, strategy, reason } = await clusterSignalsAuto(signals, {
+      const { clusters, strategy, reason, naming } = await clusterSignalsAuto(signals, {
         db: this.cfg.db.raw,
         embeddingClient,
+        // RONDA-2 Point 5 — pass the LLM + objective so cluster
+        // canonicals become descriptive phrases.
+        llm: this.cfg.llm,
+        objective: input.objective,
       });
       logger.info('ReAct clustering complete', {
         clusters: clusters.length,
@@ -671,6 +675,7 @@ export class ReActOrchestrator {
         strategy,
         reason,
         semanticEligible: signals.length >= MIN_SIGNALS_FOR_SEMANTIC,
+        naming,
       });
 
       const trends: Trend[] = [];

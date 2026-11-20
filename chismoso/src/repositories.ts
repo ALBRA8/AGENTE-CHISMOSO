@@ -411,6 +411,14 @@ export class OpportunityRepository {
   constructor(private db: ChismosoDB) {}
 
   insert(o: Opportunity, investigationId?: string): void {
+    // RONDA-2 Point 3 — the VALUES clause had 25 placeholders for 24
+    // columns (an extra `?`), which made every opportunity insert throw
+    // `SqliteError: 25 values for 24 columns` whenever the orchestrator
+    // reached the opportunity-persistence step. This blocked the E2E
+    // INSUFFICIENT_EVIDENCE test (which exercises the full pipeline and
+    // can produce opportunities when the ZAI SDK returns results for the
+    // nonsense query). Removing the extra `?` makes the column count
+    // match the placeholder count, restoring the insert path.
     this.db.prepare(`
       INSERT INTO opportunities (
         id, title, description, problem, problem_ref, target_segment, geography,
@@ -418,7 +426,7 @@ export class OpportunityRepository {
         competition, uncertainty, score, score_breakdown_json, confidence,
         suggested_next_agent, trend_ref, evidence_json, created_at, investigation_id,
         metadata_json
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       o.id,
       o.title,

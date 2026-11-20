@@ -342,10 +342,15 @@ export class Orchestrator {
         // Don't fail the investigation — embeddings are nice-to-have.
       }
 
-      const { clusters, signalToCluster, strategy, reason } =
+      const { clusters, signalToCluster, strategy, reason, naming } =
         await clusterSignalsAuto(signals, {
           db: this.cfg.db.raw,
           embeddingClient,
+          // RONDA-2 Point 5 — pass the LLM + objective so cluster
+          // canonicals become descriptive phrases instead of single
+          // keywords.
+          llm: this.cfg.llm,
+          objective: input.objective,
         });
       logger.info('Clustering complete', {
         clusters: clusters.length,
@@ -353,6 +358,7 @@ export class Orchestrator {
         strategy,
         reason,
         semanticEligible: signals.length >= MIN_SIGNALS_FOR_SEMANTIC,
+        naming,
       });
 
       const trends: Trend[] = [];
