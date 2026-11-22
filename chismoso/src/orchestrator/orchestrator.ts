@@ -59,6 +59,7 @@ import {
 import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
 import { generateOpportunity, makeOpportunityDedupper } from '../intelligence/opportunities.js';
+import { filterRelevantSemantic, filterRelevant, type RelevanceContext } from '../intelligence/relevance.js';
 import { buildReport } from './reporter.js';
 import { buildFicha } from '../ficha/builder.js';
 import { renderFichaMarkdown, FICHAS_DIR } from '../ficha/renderer.js';
@@ -268,19 +269,22 @@ export class Orchestrator {
       // ----------------------------------------------------------------------
       // STEP 5: ANALYZE (cluster + trend + problem + opportunity)
       // ----------------------------------------------------------------------
-      // FASE-3-QUALITY §3.1 — exclude signals flagged `irrelevant` by the
-      // relevance scorer from clustering / trend / problem / opportunity
-      // analysis. They're still persisted (so `chismoso signals list` shows
-      // everything that came back from the providers), but they don't
-      // contribute to trend scores, opportunity generation, etc.
+      // RONDA-4 Point 1 — apply semantic relevance filtering when LLM is
+      // available, falling back to lexical filtering. Signals below the
+      // threshold are marked `irrelevant` in metadata and excluded from
+      // clustering / trend / opportunity analysis.
       const allSignals = this.cfg.repositories.signals.findByInvestigation(investigationId);
       const evidence = this.cfg.repositories.evidence.findByInvestigation(investigationId);
-      const irrelevantCount = allSignals.filter(
-        (s) => (s.metadata?.relevance as { irrelevant?: boolean } | undefined)?.irrelevant === true,
-      ).length;
-      const signals = allSignals.filter(
-        (s) => (s.metadata?.relevance as { irrelevant?: boolean } | undefined)?.irrelevant !== true,
-      );
+      const relCtx: RelevanceContext = {
+        objective: input.objective,
+        geography: input.geography ?? 'global',
+      };
+      const relResult = await filterRelevantSemantic(allSignals, relCtx, {
+        llm: this.cfg.llm,
+        enabled: !!this.cfg.llm,
+      });
+      const signals = relResult.relevant;
+      const irrelevantCount = relResult.discarded;
       if (irrelevantCount > 0) {
         investigation.errors.push(`relevance_discarded:${irrelevantCount}`);
         logger.info('Relevance filter applied', {
@@ -447,8 +451,15 @@ export class Orchestrator {
         // porque signal.topic es la query y trend.topic es el canonical.
         const oppSignals = trend.signals.length > 0 ? trend.signals : signals.filter((s) => s.topic === trend.topic);
         const oppEvidence = trend.evidence.length > 0 ? trend.evidence : evidence.filter((e) => e.topic === trend.topic);
-        // Solo generamos oportunidad si hay problema detectado, o si el trend es fuerte
-        if (!matchingProblem && trend.state !== 'STRONG_TREND' && trend.state !== 'ESTABLISHED_TREND') {
+        // RONDA-4: generate opportunities from trends with problems OR
+        // EMERGING_TREND OR WEAK_SIGNAL with enough signals (≥3).
+        // Previously only STRONG_TREND/ESTABLISHED_TREND qualified, which
+        // limited output to 1-2 opportunities per investigation.
+        if (!matchingProblem &&
+            trend.state !== 'STRONG_TREND' &&
+            trend.state !== 'ESTABLISHED_TREND' &&
+            trend.state !== 'EMERGING_TREND' &&
+            !(trend.state === 'WEAK_SIGNAL' && trend.signalsCount >= 3)) {
           continue;
         }
         const { opportunity, weak, v1, v1Error } = generateOpportunity({

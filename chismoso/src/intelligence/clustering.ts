@@ -53,7 +53,9 @@ export interface ClusterResult {
  *   3. Si encuentra, asigna. Si no, crea un cluster nuevo.
  *   4. El canonical del cluster es el keyword más frecuente entre sus señales.
  */
-export function clusterSignals(signals: Signal[], threshold = 0.34): ClusterResult {
+export function clusterSignals(signals: Signal[], threshold = 0.45): ClusterResult {
+  // RONDA-4: raised from 0.34 to 0.45 to preserve distinct sub-topics
+  // within a broader theme while still grouping genuinely related signals.
   const clusters: TopicCluster[] = [];
   const signalToCluster = new Map<string, string>();
   const clusterTokens = new Map<string, Map<string, number>>(); // clusterId → tokenFreq
@@ -375,7 +377,7 @@ function mergeDuplicateClusters(
   clusterTokens: Map<string, Map<string, number>>,
   signalToCluster: Map<string, string>,
 ): void {
-  const MERGE_THRESHOLD = 0.6;
+  const MERGE_THRESHOLD = 0.85; // RONDA-4: raise from 0.6 to preserve distinct trends
 
   for (let i = 0; i < clusters.length; i++) {
     for (let j = i + 1; j < clusters.length; j++) {

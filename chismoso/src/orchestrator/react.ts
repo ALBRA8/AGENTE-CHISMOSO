@@ -55,6 +55,7 @@ import {
 import { detectTrend } from '../intelligence/trends.js';
 import { detectProblem } from '../intelligence/problems.js';
 import { generateOpportunity, makeOpportunityDedupper } from '../intelligence/opportunities.js';
+import { filterRelevantSemantic } from '../intelligence/relevance.js';
 import { buildReport } from './reporter.js';
 import { buildFicha } from '../ficha/builder.js';
 import { renderFichaMarkdown, FICHAS_DIR } from '../ficha/renderer.js';
@@ -607,8 +608,28 @@ export class ReActOrchestrator {
       // STEP 6: ANALYZE — cluster + trend + problem + opportunity + report
       // (Same as Orchestrator.investigate — drop-in replacement contract.)
       // -------------------------------------------------------------------
-      const signals = this.cfg.repositories.signals.findByInvestigation(investigationId);
+      // RONDA-4 Point 1 — apply semantic relevance filtering when LLM is
+      // available, falling back to lexical filtering.
+      const allSignals = this.cfg.repositories.signals.findByInvestigation(investigationId);
       const evidence = this.cfg.repositories.evidence.findByInvestigation(investigationId);
+      const relCtx = {
+        objective: input.objective,
+        geography: input.geography ?? 'global',
+      };
+      const relResult = await filterRelevantSemantic(allSignals, relCtx, {
+        llm: this.cfg.llm,
+        enabled: !!this.cfg.llm,
+      });
+      const signals = relResult.relevant;
+      if (relResult.discarded > 0) {
+        investigation.errors.push(`relevance_discarded:${relResult.discarded}`);
+        logger.info('Relevance filter applied (ReAct)', {
+          investigationId,
+          total: allSignals.length,
+          relevant: signals.length,
+          discarded: relResult.discarded,
+        });
+      }
       investigation.signalsFound = signals.length;
       investigation.evidenceFound = evidence.length;
 
@@ -749,7 +770,11 @@ export class ReActOrchestrator {
         const matchingProblem = problems.find((p) => p.topic === trend.topic);
         const oppSignals = trend.signals.length > 0 ? trend.signals : signals.filter((s) => s.topic === trend.topic);
         const oppEvidence = trend.evidence.length > 0 ? trend.evidence : evidence.filter((e) => e.topic === trend.topic);
-        if (!matchingProblem && trend.state !== 'STRONG_TREND' && trend.state !== 'ESTABLISHED_TREND') {
+        if (!matchingProblem &&
+            trend.state !== 'STRONG_TREND' &&
+            trend.state !== 'ESTABLISHED_TREND' &&
+            trend.state !== 'EMERGING_TREND' &&
+            !(trend.state === 'WEAK_SIGNAL' && trend.signalsCount >= 3)) {
           continue;
         }
         const { opportunity, weak } = generateOpportunity({

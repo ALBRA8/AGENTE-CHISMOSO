@@ -1,6 +1,6 @@
 # CHISMOSO — FASE-3-QUALITY Eval Results
 
-**Generated:** 2026-11-22T02:54:25.538Z
+**Generated:** 2026-11-22T03:49:36.956Z
 
 Eval suite for the Phase 3 Quality-of-Results fixes.
 Each objective runs the full intelligence pipeline against a fixture
@@ -12,9 +12,9 @@ concrete + V1-validated opportunity count.
 
 | Objective | Raw signals | Relevant % | Discarded | Unique trends | Dup names | Concrete opps | Weak opps | V1 valid | V1 invalid |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Restaurantes en Colombia | 10 | 100% | 0 | 1 | 0 | 1 | 0 | 1 | 0 |
-| Collares para perros en Perú | 10 | 100% | 0 | 5 | 0 | 1 | 0 | 1 | 0 |
-| Nicho de YouTube/TikTok para monetizar | 11 | 100% | 0 | 6 | 0 | 1 | 1 | 1 | 0 |
+| Restaurantes en Colombia | 10 | 100% | 0 | 2 | 0 | 1 | 0 | 1 | 0 |
+| Collares para perros en Perú | 10 | 100% | 0 | 6 | 0 | 1 | 1 | 1 | 0 |
+| Nicho de YouTube/TikTok para monetizar | 11 | 100% | 0 | 9 | 0 | 1 | 1 | 1 | 0 |
 
 ## Per-objective details
 
@@ -25,7 +25,7 @@ concrete + V1-validated opportunity count.
 - **Raw signals (after dedup):** 10
 - **Relevant signals (after §3.1 filter):** 10 (100%)
 - **Discarded as irrelevant:** 0
-- **Unique trends (after §3.4 dedup):** 1
+- **Unique trends (after §3.4 dedup):** 2
 - **Duplicate trend names:** 0 (must be 0)
 - **Concrete opportunities (niche + segment + geography):** 1
 - **Opportunities with ≥3 lead search hints:** 1
@@ -35,6 +35,7 @@ concrete + V1-validated opportunity count.
 
 **Trend names detected:**
 - `oportunidades restaurantes negocio`
+- `automatizacion oportunidades negocio`
 
 ### Collares para perros en Perú
 
@@ -43,16 +44,17 @@ concrete + V1-validated opportunity count.
 - **Raw signals (after dedup):** 10
 - **Relevant signals (after §3.1 filter):** 10 (100%)
 - **Discarded as irrelevant:** 0
-- **Unique trends (after §3.4 dedup):** 5
+- **Unique trends (after §3.4 dedup):** 6
 - **Duplicate trend names:** 0 (must be 0)
 - **Concrete opportunities (niche + segment + geography):** 1
 - **Opportunities with ≥3 lead search hints:** 1
-- **Weak opportunities (score <35, not delivered by orchestrator):** 0
+- **Weak opportunities (score <35, not delivered by orchestrator):** 1
 - **OpportunityV1 schema valid:** 1
 - **OpportunityV1 schema invalid:** 0
 
 **Trend names detected:**
-- `mascotas collares perros`
+- `accesorios mascotas collares`
+- `collares perros peru`
 - `inteligentes collares perros`
 - `disenadores collares perros`
 - `personalizados collares perros`
@@ -65,7 +67,7 @@ concrete + V1-validated opportunity count.
 - **Raw signals (after dedup):** 11
 - **Relevant signals (after §3.1 filter):** 11 (100%)
 - **Discarded as irrelevant:** 0
-- **Unique trends (after §3.4 dedup):** 6
+- **Unique trends (after §3.4 dedup):** 9
 - **Duplicate trend names:** 0 (must be 0)
 - **Concrete opportunities (niche + segment + geography):** 1
 - **Opportunities with ≥3 lead search hints:** 1
@@ -74,10 +76,13 @@ concrete + V1-validated opportunity count.
 - **OpportunityV1 schema invalid:** 0
 
 **Trend names detected:**
-- `monetizar nicho youtube`
+- `personales finanzas nicho`
+- `patrocinador nicho youtube`
 - `crecimiento nicho youtube`
 - `angloparlantes latam nicho`
+- `plataformas tiktok nicho`
 - `visualizacion nicho youtube`
+- `productividad nicho youtube`
 - `generalistas nicho youtube`
 - `directamente nicho youtube`
 

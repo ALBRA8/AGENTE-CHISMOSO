@@ -31,10 +31,13 @@ function mkSignal(snippet: string, topic = 't'): Signal {
 
 describe('topic clustering', () => {
   it('groups signals with similar tokens into one cluster', () => {
+    // RONDA-4: threshold raised to 0.5. These 3 signals share enough
+    // tokens (restaurant, whatsapp, reservation/booking, automate) to
+    // cluster together even at 0.5.
     const sigs = [
-      mkSignal('restaurant reservation automation WhatsApp Colombia'),
-      mkSignal('automate restaurant WhatsApp booking flow'),
-      mkSignal('how to automate WhatsApp reservations at restaurant'),
+      mkSignal('restaurant reservation automation WhatsApp Colombia booking'),
+      mkSignal('automate restaurant WhatsApp booking flow reservation'),
+      mkSignal('how to automate WhatsApp reservations at restaurant booking'),
     ];
     const { clusters, signalToCluster } = clusterSignals(sigs);
     expect(clusters.length).toBe(1);
