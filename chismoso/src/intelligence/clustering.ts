@@ -134,21 +134,14 @@ export function clusterSignals(signals: Signal[], threshold = 0.34): ClusterResu
     c.canonical = pickCanonical(c.canonical, freq);
   }
 
-  // FASE-3-QUALITY §3.4 — no duplicate trend names.
-  //
-  // After canonical refresh, two clusters may end up with the same
-  // most-frequent token (e.g. both clusters' top token is "restaurantes").
-  // We rename duplicates by appending a discriminator: the second
-  // occurrence becomes "<topic>-2", the third "<topic>-3", etc. If the
-  // underlying cluster has a meaningful secondary token we use that to
-  // build a descriptive phrase (e.g. "restaurantes bogota" instead of
-  // "restaurantes-2"); the discriminator is the fallback when no second
-  // token is available.
-  //
-  // RONDA-2 Point 5 — every canonical is expanded into a descriptive
-  // phrase of 2+ tokens. A single-token canonical is never acceptable
-  // as a trend name (it tells the user nothing about the cluster).
-  dedupCanonicalNames(clusters, clusterTokens);
+  // RONDA-3 Point 1 — no suffixes "-2". Merge near-duplicate clusters
+  // instead of renaming. Then expand every canonical into a descriptive
+  // phrase (2+ words with meaning).
+  mergeDuplicateClusters(clusters, clusterTokens, signalToCluster);
+  for (const c of clusters) {
+    const freq = clusterTokens.get(c.id);
+    c.canonical = expandToPhrase(c.canonical, freq);
+  }
 
   return { clusters, signalToCluster };
 }
@@ -337,16 +330,27 @@ export async function nameClustersDescriptively(
       fallbackUsed++;
     }
 
-    // Uniqueness pass — append -N discriminator on collision.
+    // RONDA-3: no -N suffixes. If the name collides with a previous one,
+    // append the cluster's most distinctive secondary token to disambiguate.
     const norm = nextCanonical.toLowerCase().trim();
     if (seen.has(norm) && norm !== c.canonical.toLowerCase().trim()) {
-      let n = 2;
-      let candidate = `${nextCanonical}-${n}`;
-      while (seen.has(candidate.toLowerCase().trim())) {
-        n++;
-        candidate = `${nextCanonical}-${n}`;
+      // Find a distinctive token not in any existing name
+      const existing = Array.from(seen).join(' ');
+      const candidates: Array<{ tok: string; count: number }> = [];
+      if (freq) {
+        for (const [tok, count] of freq.entries()) {
+          if (tok.length < 4) continue;
+          if (norm.includes(tok.toLowerCase())) continue;
+          if (existing.includes(tok.toLowerCase())) continue;
+          candidates.push({ tok, count });
+        }
       }
-      nextCanonical = candidate;
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.count - a.count);
+        nextCanonical = `${nextCanonical} ${candidates[0].tok}`;
+      }
+      // If still colliding, it's genuinely the same topic — keep the
+      // name as-is (mergeDuplicateClusters should have handled this).
     }
     seen.add(nextCanonical.toLowerCase().trim());
 
@@ -357,50 +361,71 @@ export async function nameClustersDescriptively(
 }
 
 /**
- * FASE-3-QUALITY §3.4 — ensure no two clusters share the same canonical
- * name. Renames duplicates by:
- *   1. Trying to derive a descriptive phrase from the cluster's
- *      secondary tokens (e.g. "restaurantes" + "bogota" →
- *      "restaurantes bogota").
- *   2. ALWAYS appending a numeric discriminator (`-2`, `-3`, ...) when
- *      the derived phrase collides with an existing name, so duplicates
- *      are unambiguously renamed even when two clusters share the same
- *      top tokens (e.g. both clusters' top-2 tokens are "restaurantes"
- *      and "bogota" — the second one becomes "restaurantes bogota-2").
+ * RONDA-3 Point 1 — merge near-duplicate clusters instead of appending
+ * "-2" suffixes. Two clusters are "near-duplicate" when:
+ *   - Their canonical names match (case-insensitive), OR
+ *   - Their top-3 tokens overlap by >= 60%.
  *
- * Mutates `clusters` in place.
+ * Merging: the smaller cluster's signals are absorbed into the larger
+ * one. The smaller cluster is removed from the array. The signalToCluster
+ * map is updated so absorbed signals point to the surviving cluster.
  */
-function dedupCanonicalNames(
+function mergeDuplicateClusters(
   clusters: TopicCluster[],
   clusterTokens: Map<string, Map<string, number>>,
+  signalToCluster: Map<string, string>,
 ): void {
-  const seen = new Set<string>(); // canonical lowercase → existence
-  for (const c of clusters) {
-    const original = c.canonical;
-    const norm = original.toLowerCase().trim();
-    if (!seen.has(norm)) {
-      // First occurrence — expand the canonical into a descriptive
-      // phrase using the cluster's secondary tokens.
-      const expanded = expandToPhrase(original, clusterTokens.get(c.id));
-      const expandedNorm = expanded.toLowerCase().trim();
-      if (seen.has(expandedNorm)) {
-        // The expansion collided with an existing name — fall through to
-        // the duplicate path.
-        const altName = deriveAlternativeName(original, clusterTokens.get(c.id), 2, seen);
-        c.canonical = altName;
-        seen.add(altName.toLowerCase().trim());
-      } else {
-        c.canonical = expanded;
-        seen.add(expandedNorm);
+  const MERGE_THRESHOLD = 0.6;
+
+  for (let i = 0; i < clusters.length; i++) {
+    for (let j = i + 1; j < clusters.length; j++) {
+      const a = clusters[i];
+      const b = clusters[j];
+      const aTokens = clusterTokens.get(a.id);
+      const bTokens = clusterTokens.get(b.id);
+      const aCanonical = a.canonical.toLowerCase().trim();
+      const bCanonical = b.canonical.toLowerCase().trim();
+
+      let shouldMerge = false;
+      if (aCanonical === bCanonical && aCanonical.length > 0) {
+        shouldMerge = true;
+      } else if (aTokens && bTokens) {
+        const overlap = tokenOverlap(aTokens, bTokens);
+        if (overlap >= MERGE_THRESHOLD) shouldMerge = true;
       }
-      continue;
+
+      if (shouldMerge) {
+        // Absorb smaller into larger
+        const [survivor, victim] = a.signalIds.length >= b.signalIds.length ? [a, b] : [b, a];
+        survivor.signalIds.push(...victim.signalIds);
+        survivor.keywords.push(...victim.keywords);
+        // Merge token frequencies
+        const survivorFreq = clusterTokens.get(survivor.id)!;
+        const victimFreq = clusterTokens.get(victim.id)!;
+        for (const [tok, count] of victimFreq.entries()) {
+          survivorFreq.set(tok, (survivorFreq.get(tok) ?? 0) + count);
+        }
+        clusterTokens.set(survivor.id, survivorFreq);
+        // Update signalToCluster
+        for (const sid of victim.signalIds) {
+          signalToCluster.set(sid, survivor.id);
+        }
+        // Remove victim
+        clusters.splice(j, 1);
+        clusterTokens.delete(victim.id);
+        j--; // re-check same index
+      }
     }
-    // Duplicate — derive an alternative name that doesn't collide with
-    // anything in `seen`.
-    const altName = deriveAlternativeName(original, clusterTokens.get(c.id), 2, seen);
-    c.canonical = altName;
-    seen.add(altName.toLowerCase().trim());
   }
+}
+
+function tokenOverlap(a: Map<string, number>, b: Map<string, number>): number {
+  const aTop = new Set([...a.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k]) => k));
+  const bTop = new Set([...b.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k]) => k));
+  let intersection = 0;
+  for (const t of aTop) if (bTop.has(t)) intersection++;
+  const union = new Set([...aTop, ...bTop]).size;
+  return union === 0 ? 0 : intersection / union;
 }
 
 /**
@@ -460,43 +485,7 @@ function expandToPhrase(canonical: string, freq?: Map<string, number>): string {
  *   - The `seen` set is consulted to find the smallest N that produces
  *     a globally-unique name.
  */
-function deriveAlternativeName(
-  canonical: string,
-  freq: Map<string, number> | undefined,
-  startN: number,
-  seen: Set<string>,
-): string {
-  const canonNorm = canonical.toLowerCase().trim();
-  let phrase = canonical;
-  if (freq && freq.size > 0) {
-    const candidates: Array<{ tok: string; count: number }> = [];
-    for (const [tok, count] of freq.entries()) {
-      if (tok.toLowerCase() === canonNorm) continue;
-      // Also skip tokens that already appear in the canonical phrase
-      // (so we don't append "restaurantes" to "restaurantes bogota").
-      if (canonNorm.includes(tok.toLowerCase())) continue;
-      if (tok.length < 4) continue;
-      candidates.push({ tok, count });
-    }
-    if (candidates.length > 0) {
-      candidates.sort((a, b) => b.count - a.count);
-      const parts = candidates.slice(0, 2).map((c) => c.tok);
-      phrase = `${canonical} ${parts.join(' ')}`;
-    } else {
-      phrase = `${canonical} trend`;
-    }
-  } else {
-    phrase = `${canonical} trend`;
-  }
-  // Always append -N to guarantee uniqueness.
-  let n = startN;
-  let candidate = `${phrase}-${n}`;
-  while (seen.has(candidate.toLowerCase().trim())) {
-    n++;
-    candidate = `${phrase}-${n}`;
-  }
-  return candidate;
-}
+// RONDA-3: deriveAlternativeName removed — clusters are merged, not renamed.
 
 function pickCanonical(fallback: string, freq: Map<string, number>): string {
   let best = fallback;
