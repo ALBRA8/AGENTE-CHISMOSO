@@ -80,3 +80,4 @@ server.log
 
 # upload (user-provided prompts)
 /upload/
+.zscripts/
