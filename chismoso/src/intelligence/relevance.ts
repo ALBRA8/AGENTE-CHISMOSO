@@ -231,3 +231,95 @@ export function filterRelevant(signals: Signal[], ctx: RelevanceContext): Releva
     threshold,
   };
 }
+
+/**
+ * RONDA-3 Point 2 — Semantic relevance mode (optional).
+ *
+ * When an LLM client is provided, uses it to judge whether a signal is
+ * truly about the objective (not just lexically overlapping). Falls back
+ * to the lexical scorer when no LLM is available.
+ *
+ * Example of why lexical overlap fails:
+ *   Objective: "oportunidades de negocio en restaurantes Colombia"
+ *   Signal: "El restaurante escolar lucha contra el acoso en Colombia"
+ *   Lexical overlap: "restaurante" + "colombia" → score 0.4 (passes)
+ *   Semantic: "acoso escolar" ≠ "negocio restaurante" → score 0.05 (discarded)
+ */
+
+import type { LLMClient } from '../orchestrator/llm.js';
+
+export interface SemanticRelevanceOptions {
+  llm?: LLMClient;
+  /** When true, use LLM for semantic scoring. Default: false. */
+  enabled?: boolean;
+}
+
+/**
+ * Score a signal semantically using the LLM. Returns 0..1.
+ * Falls back to lexical scoreRelevance() if LLM not available or call fails.
+ */
+export async function scoreRelevanceSemantic(
+  signal: Signal,
+  objective: string,
+  geography: string,
+  opts: SemanticRelevanceOptions = {},
+): Promise<number> {
+  if (!opts.llm || !opts.enabled) {
+    return scoreRelevance(signal, objective, geography);
+  }
+  try {
+    const snippet = (signal.rawSnippet ?? '').slice(0, 300);
+    const prompt = `Rate the relevance of this signal to the business objective.
+Objective: "${objective}" (geography: ${geography})
+Signal snippet: "${snippet}"
+
+Reply with ONLY a number 0-100 where:
+- 90-100: directly about a business opportunity in this objective+geography
+- 50-89: tangentially related but useful context
+- 20-49: shares some keywords but different topic
+- 0-19: completely unrelated
+
+Number:`;
+
+    const resp = await opts.llm.chat([
+      { role: 'system', content: 'You are a relevance scorer. Reply ONLY with a number 0-100.' },
+      { role: 'user', content: prompt },
+    ]);
+    const num = parseInt(resp.content.trim().replace(/[^0-9]/g, '').slice(0, 3) || '50', 10);
+    return Math.max(0, Math.min(1, num / 100));
+  } catch {
+    // LLM call failed — fall back to lexical
+    return scoreRelevance(signal, objective, geography);
+  }
+}
+
+/**
+ * Filter signals using semantic relevance (if LLM available) or lexical.
+ */
+export async function filterRelevantSemantic(
+  signals: Signal[],
+  ctx: RelevanceContext,
+  semanticOpts: SemanticRelevanceOptions = {},
+): Promise<RelevanceFilterResult> {
+  if (!semanticOpts.llm || !semanticOpts.enabled) {
+    return filterRelevant(signals, ctx);
+  }
+  const threshold = ctx.threshold ?? DEFAULT_RELEVANCE_THRESHOLD;
+  let discarded = 0;
+  const relevant: Signal[] = [];
+  for (const s of signals) {
+    const score = await scoreRelevanceSemantic(s, ctx.objective, ctx.geography, semanticOpts);
+    applyRelevance(s, ctx);
+    if (s.metadata?.relevance) {
+      (s.metadata.relevance as any).score = Math.round(score * 100) / 100;
+      (s.metadata.relevance as any).irrelevant = score < threshold;
+      (s.metadata.relevance as any).semantic = true;
+    }
+    if (score < threshold) {
+      discarded++;
+    } else {
+      relevant.push(s);
+    }
+  }
+  return { relevant, discarded, total: signals.length, threshold };
+}
