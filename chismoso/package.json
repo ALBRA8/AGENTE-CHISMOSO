@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx scripts/e2e.ts",
+    "eval": "tsx scripts/eval.ts",
     "lint": "tsc --noEmit"
   },
   "engines": {
