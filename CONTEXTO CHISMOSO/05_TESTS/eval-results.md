@@ -1,6 +1,6 @@
 # CHISMOSO — FASE-3-QUALITY Eval Results
 
-**Generated:** 2026-11-22T02:52:06.196Z
+**Generated:** 2026-11-22T02:54:25.538Z
 
 Eval suite for the Phase 3 Quality-of-Results fixes.
 Each objective runs the full intelligence pipeline against a fixture
