@@ -38,10 +38,11 @@
   ],
   "exclude": [
     "node_modules",
-    "chismoso/tests",
+    "chismoso/**",
+    "tests/**",
     "examples",
     "skills",
-    "chismoso/dist",
-    ".next"
+    ".next",
+    "launchers/**"
   ]
 }

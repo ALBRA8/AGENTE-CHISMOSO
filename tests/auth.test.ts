@@ -113,17 +113,18 @@ describe('auth middleware — env wiring', () => {
       expect(result.reason).toBe('invalid_token');
     });
 
-    it('returns ok:false with reason=invalid_token when auth is enabled and no tokens are configured', () => {
+    it('returns ok:false with reason=no_tokens_configured when auth is enabled and no tokens are configured', () => {
       // Edge case: auth is enabled but CHISMOSO_AUTH_TOKENS is empty.
       // Any request — even one with a non-empty header — must be rejected.
-      // (Operators who enable auth without configuring tokens get a fail-closed
-      // state by design; the CLI `auth status` command warns about this.)
+      // The implementation distinguishes 'no_tokens_configured' (operator
+      // misconfiguration) from 'invalid_token' (wrong token) for clearer
+      // error messages. Both are fail-closed.
       process.env.CHISMOSO_AUTH_ENABLED = 'true';
       process.env.CHISMOSO_AUTH_TOKENS = '';
       const req = makeReq({ [AUTH_HEADER_DEFAULT]: 'any-token-at-all' });
       const result = checkAuth(req);
       expect(result.ok).toBe(false);
-      expect(result.reason).toBe('invalid_token');
+      expect(result.reason).toBe('no_tokens_configured');
     });
 
     it('accepts any one of the configured tokens (multi-token list)', () => {

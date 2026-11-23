@@ -4,10 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
-    "prebuild": "cd chismoso && bunx tsc",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
-    "lint": "eslint ."
+    "prebuild": "cd chismoso && npx tsc",
+    "build": "next build && node scripts/copy-standalone.mjs",
+    "start": "node .next/standalone/server.js",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.9"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
