@@ -28,10 +28,10 @@ import { authedRoute } from '@/lib/middleware';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const DAEMON_URL = process.env.WHATSAPP_DAEMON_URL || 'http://127.0.0.1:3002';
-const INTERNAL_API_SECRET =
-  process.env.INTERNAL_API_SECRET || '12345678901234567890123456789012';
+const DAEMON_URL = process.env.WHATSAPP_DAEMON_URL || '';
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 const TIMEOUT_MS = 5000;
+const ALLOWED_DAEMON_PATHS = new Set(['/status', '/connect', '/disconnect', '/qr']);
 
 /**
  * Best-effort bootstrap of the WhatsApp daemon. Resolves the daemon
@@ -74,11 +74,50 @@ function ensureDaemonRunning() {
 }
 
 export const GET = authedRoute(async (req: NextRequest) => {
+  // FASE-2 P0-3: fail-closed if daemon URL or secret not configured.
+  if (!DAEMON_URL) {
+    return NextResponse.json(
+      { status: 'error', message: 'WHATSAPP_DAEMON_URL not configured' },
+      { status: 503 }
+    );
+  }
+  if (!INTERNAL_API_SECRET) {
+    return NextResponse.json(
+      { status: 'error', message: 'INTERNAL_API_SECRET not configured' },
+      { status: 503 }
+    );
+  }
+
   const { searchParams } = new URL(req.url);
   const pathParam = searchParams.get('path') || '/status';
 
+  // FASE-2 P0-4: allowlist of daemon paths + URL origin validation.
+  if (!ALLOWED_DAEMON_PATHS.has(pathParam)) {
+    return NextResponse.json(
+      { status: 'error', message: `Path "${pathParam}" not in allowlist` },
+      { status: 400 }
+    );
+  }
+
+  // Construct URL safely — reject if path escapes the daemon origin.
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(pathParam, DAEMON_URL);
+  } catch {
+    return NextResponse.json(
+      { status: 'error', message: 'Invalid path parameter' },
+      { status: 400 }
+    );
+  }
+  if (targetUrl.origin !== new URL(DAEMON_URL).origin) {
+    return NextResponse.json(
+      { status: 'error', message: 'Path escapes daemon origin (SSRF blocked)' },
+      { status: 400 }
+    );
+  }
+
   const makeReq = async () => {
-    return await fetch(`${DAEMON_URL}${pathParam}`, {
+    return await fetch(targetUrl.href, {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${INTERNAL_API_SECRET}`,

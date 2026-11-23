@@ -207,11 +207,14 @@ export async function GET() {
     /* fall through with circuitBreaker = unknown */
   }
 
+  // FASE-4 P0-5: LLM is informational only — it must NEVER produce 503.
+  // Only DB + env + draining decide readiness. An unreachable LLM means
+  // investigations will fail, but the dashboard, alerts, topics, etc.
+  // are still servable.
   const allOk =
     checks.shutdown === 'ok' &&
     checks.db === 'ok' &&
-    checks.env === 'ok' &&
-    checks.llm === 'ok';
+    checks.env === 'ok';
 
   const status = checks.shutdown === 'draining' ? 'draining' : allOk ? 'ready' : 'not_ready';
 
